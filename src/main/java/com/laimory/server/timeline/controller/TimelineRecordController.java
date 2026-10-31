@@ -94,7 +94,7 @@ public class TimelineRecordController implements TimelineRecordApi {
     @Override
     public ResponseEntity<ApiResponse<Void>> updateTimelineEventPlace(
             String applicationVersion, UUID subjectId, Long timelineEventId, UpdateTimelineEventPlaceRequest request) {
-        timelineEventEditService.updatePlace(applicationVersion, subjectId, timelineEventId, request.place());
+        timelineEventEditService.updatePlace(applicationVersion, subjectId, timelineEventId, request);
         return ResponseEntity.ok(ApiResponse.success(null));
     }
 

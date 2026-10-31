@@ -18,6 +18,8 @@ import com.laimory.server.timeline.dto.DailyTimelineResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoPayloadRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventPhotoRequest;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPlaceRequest;
+import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
@@ -56,7 +58,7 @@ import org.springframework.test.context.TestPropertySource;
  *   <li>같은 값 재요청·순차 변경은 성공하고 마지막 감정이 조회 API에 보인다. 사전 조회 뒤 삭제된
  *       snapshot ID는 stale 성공/500이 아니라 404다.</li>
  *   <li>기존 save API는 여전히 {@code DRAFT→SAVED + 최초 감정}을 한 UPDATE로 처리한다.</li>
- *   <li>수동 Event는 DRAFT/SAVED 모두에 insert되며 question/place/address null이고, 날짜 조회에서
+ *   <li>수동 Event는 DRAFT/SAVED 모두에 insert되며 question/address null이고(place·좌표는 선택 입력), 날짜 조회에서
  *       startAt/ID 정렬대로 노출된다. 타인 subject·없는 날짜에는 행이 생기지 않는다.</li>
  *   <li>photosToAdd 포함 생성은 Event·PHOTO Item·junction을 한 commit으로 만들고(응답 == 직후 조회),
  *       기존 PHOTO 재사용은 PATCH와 같은 규칙이며, 사진 해석 실패는
@@ -88,6 +90,8 @@ class TimelineManualMutationIntegrationTest {
     private DailyTimelineService dailyTimelineService;
     @Autowired
     private TimelineEventEditTransactionService timelineEventEditTransactionService;
+    @Autowired
+    private TimelineEventEditService timelineEventEditService;
     @Autowired
     private DailyRecordRepository dailyRecordRepository;
     @Autowired
@@ -206,12 +210,12 @@ class TimelineManualMutationIntegrationTest {
     void DRAFT와_SAVED_모두에_생성되고_AI_필드는_null_audit_컬럼은_채워진다() {
         TimelineEventResponse onDraft = timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "카페에서 휴식", "성수동",
-                        DATE.atTime(14, 0), DATE.atTime(15, 0), " 책을 읽었다. ", List.of()));
+                        DATE.atTime(14, 0), DATE.atTime(15, 0), " 책을 읽었다. ", List.of(), null, null, null));
 
         timelineSaveService.save("v1", subjectId, DATE, EmotionType.HAPPY);
         TimelineEventResponse onSaved = timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.MEAL, "저녁", null,
-                        DATE.atTime(19, 0), null, null, List.of()));
+                        DATE.atTime(19, 0), null, null, List.of(), null, null, null));
 
         for (TimelineEventResponse response : List.of(onDraft, onSaved)) {
             assertThat(response.timelineEventId()).isNotNull();
@@ -232,13 +236,34 @@ class TimelineManualMutationIntegrationTest {
     }
 
     @Test
+    void userSpecifiedPlaceAndCoordinatesPersistThroughCreatePatchAndPlacePut() {
+        Long eventId = timelineEventCreateService.createEvent("v1", subjectId, DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "산책", null,
+                        DATE.atTime(10, 0), null, null, List.of(), " 한강공원 ", 37.5284, 126.9327)).timelineEventId();
+
+        timelineEventEditService.updateEvent("v1", subjectId, eventId, new UpdateTimelineEventRequest(
+                null, null, null, null, null, null, null, 37.5512, 127.0410));
+        TimelineEventResponse afterPatch = dailyTimelineService.getDailyTimeline("v1", subjectId, DATE).events().get(0);
+        assertThat(afterPatch.place()).isEqualTo("한강공원");
+        assertThat(afterPatch.latitude()).isEqualTo(37.5512);
+        assertThat(afterPatch.longitude()).isEqualTo(127.0410);
+
+        timelineEventEditService.updatePlace("v1", subjectId, eventId,
+                new UpdateTimelineEventPlaceRequest("서울숲", null, null));
+        TimelineEvent stored = timelineEventRepository.findById(eventId).orElseThrow();
+        assertThat(stored.getPlace()).isEqualTo("서울숲");
+        assertThat(stored.getLatitude()).isEqualTo(37.5512);
+        assertThat(stored.getLongitude()).isEqualTo(127.0410);
+    }
+
+    @Test
     void 수동_Event는_junction과_Item이_없고_날짜_조회에서_정렬대로_노출된다() {
         Long later = timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "휴식", null,
-                        DATE.atTime(15, 0), null, null, List.of())).timelineEventId();
+                        DATE.atTime(15, 0), null, null, List.of(), null, null, null)).timelineEventId();
         Long earlier = timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.MEAL, "점심", null,
-                        DATE.atTime(12, 0), null, null, List.of())).timelineEventId();
+                        DATE.atTime(12, 0), null, null, List.of(), null, null, null)).timelineEventId();
 
         for (Long eventId : List.of(later, earlier)) {
             assertThat(jdbcTemplate.queryForObject(
@@ -256,7 +281,7 @@ class TimelineManualMutationIntegrationTest {
     @Test
     void 타인_subject나_없는_날짜에는_행이_생기지_않는다() {
         CreateTimelineEventRequest request = new CreateTimelineEventRequest(
-                TimelineEventType.REST, "휴식", null, DATE.atTime(14, 0), null, null, List.of());
+                TimelineEventType.REST, "휴식", null, DATE.atTime(14, 0), null, null, List.of(), null, null, null);
 
         assertThatThrownBy(() -> timelineEventCreateService.createEvent(
                 "v1", UUID.randomUUID(), DATE, request))
@@ -280,7 +305,7 @@ class TimelineManualMutationIntegrationTest {
         TimelineEventResponse response = timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "카페에서 휴식", "성수동",
                         DATE.atTime(14, 0), DATE.atTime(15, 0), "사진과 함께",
-                        List.of(photoInput(RAW_ID, FILENAME))));
+                        List.of(photoInput(RAW_ID, FILENAME)), null, null, null));
         trackItems(response);
 
         // Event·PHOTO Item·junction이 각 1행 — 한 트랜잭션 commit의 결과다.
@@ -318,7 +343,7 @@ class TimelineManualMutationIntegrationTest {
 
         assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "소수 초 사진", null,
-                        DATE.atTime(14, 0), null, null, List.of(fractional))))
+                        DATE.atTime(14, 0), null, null, List.of(fractional), null, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("photo startAt must use second precision: index=0");
 
@@ -332,13 +357,13 @@ class TimelineManualMutationIntegrationTest {
         // 커밋 뒤 응답을 잃은 저장 재탭 — Android는 pending 목록을 유지해 같은 rawId·filename을 다시 보낸다.
         TimelineEventResponse created = timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "사진 있는 이벤트", null,
-                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME))));
+                        DATE.atTime(14, 0), null, null, List.of(photoInput(RAW_ID, FILENAME)), null, null, null));
         trackItems(created);
         long itemCountBefore = timelineItemRepository.count();
         TimelineEventEditCommand retry = new TimelineEventEditCommand(
                 null, null, false, null, null, null, false, null,
                 List.of(new TimelineEventPhotoAddService.PhotoToAdd(
-                        RAW_ID, DATE.atTime(14, 5), null, FILENAME, "content://photo/" + RAW_ID, 37.5, 127.0)));
+                        RAW_ID, DATE.atTime(14, 5), null, FILENAME, "content://photo/" + RAW_ID, 37.5, 127.0)), null, null);
 
         timelineEventEditTransactionService.updateEvent(subjectId, created.timelineEventId(), retry);
 
@@ -359,7 +384,7 @@ class TimelineManualMutationIntegrationTest {
         assertThatThrownBy(() -> timelineEventCreateService.createEvent("v1", subjectId, DATE,
                 new CreateTimelineEventRequest(TimelineEventType.REST, "사진 충돌", null,
                         DATE.atTime(14, 0), null, null,
-                        List.of(photoInput(RAW_ID, FILENAME), photoInput(RAW_ID_2, FILENAME)))))
+                        List.of(photoInput(RAW_ID, FILENAME), photoInput(RAW_ID_2, FILENAME)), null, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("filename is duplicated across new photos");
 

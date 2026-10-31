@@ -217,7 +217,7 @@ class TimelineEventEditTransactionServiceTest {
         event.updateMemo("기존 메모");
 
         service.updateEvent(SUBJECT_ID, EVENT_ID, new TimelineEventEditCommand(
-                null, null, false, null, null, null, false, null, List.of()));
+                null, null, false, null, null, null, false, null, List.of(), null, null));
 
         assertThat(event.getEventType()).isEqualTo(TimelineEventType.REST);
         assertThat(event.getTitle()).isEqualTo("원래 제목");
@@ -229,12 +229,37 @@ class TimelineEventEditTransactionServiceTest {
     }
 
     @Test
+    void updateEvent_coordinatesInCommandReplaceEventCoordinates() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        event.updateCoordinates(37.5445, 127.0559);
+
+        service.updateEvent(SUBJECT_ID, EVENT_ID, new TimelineEventEditCommand(
+                null, null, false, null, null, null, false, null, List.of(), 35.1796, 129.0756));
+
+        assertThat(event.getLatitude()).isEqualTo(35.1796);
+        assertThat(event.getLongitude()).isEqualTo(129.0756);
+    }
+
+    @Test
+    void updateEvent_absentCoordinatesKeepEventCoordinates() {
+        TimelineEvent event = stubOwnedDraftEvent();
+        event.updateCoordinates(37.5445, 127.0559);
+
+        service.updateEvent(SUBJECT_ID, EVENT_ID, new TimelineEventEditCommand(
+                null, "새 제목", false, null, null, null, false, null, List.of(), null, null));
+
+        assertThat(event.getTitle()).isEqualTo("새 제목");
+        assertThat(event.getLatitude()).isEqualTo(37.5445);
+        assertThat(event.getLongitude()).isEqualTo(127.0559);
+    }
+
+    @Test
     void updateEvent_changedNullValuesClearSubtitleAndMemo() {
         TimelineEvent event = stubOwnedDraftEvent();
         event.updateMemo("기존 메모");
 
         service.updateEvent(SUBJECT_ID, EVENT_ID, new TimelineEventEditCommand(
-                null, null, true, null, null, ORIGINAL_END, true, null, List.of()));
+                null, null, true, null, null, ORIGINAL_END, true, null, List.of(), null, null));
 
         assertThat(event.getSubtitle()).isNull();
         assertThat(event.getMemo()).isNull();
@@ -251,7 +276,7 @@ class TimelineEventEditTransactionServiceTest {
                 TimelineEventType.MEAL, "새 제목", true, null,
                 replaceStart ? NEW_START : null,
                 replaceStart ? NEW_START.minusNanos(1) : ORIGINAL_START.minusNanos(1),
-                true, null, List.of(photo(RAW_ID, FILENAME)))))
+                true, null, List.of(photo(RAW_ID, FILENAME)), null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("endAt is before startAt");
 
@@ -264,7 +289,7 @@ class TimelineEventEditTransactionServiceTest {
     void updateEvent_endAtCanEqualPreservedStartAt() {
         TimelineEvent event = stubOwnedDraftEvent();
         service.updateEvent(SUBJECT_ID, EVENT_ID, new TimelineEventEditCommand(
-                null, null, false, null, null, ORIGINAL_START, false, null, List.of()));
+                null, null, false, null, null, ORIGINAL_START, false, null, List.of(), null, null));
         assertThat(event.getStartAt()).isEqualTo(ORIGINAL_START);
         assertThat(event.getEndAt()).isEqualTo(ORIGINAL_START);
     }
@@ -309,7 +334,9 @@ class TimelineEventEditTransactionServiceTest {
                 NEW_END,
                 memoChanged,
                 memo,
-                photos);
+                photos,
+                null,
+                null);
     }
 
     private TimelineEventPhotoAddService.PhotoToAdd photo(String rawId, String filename) {

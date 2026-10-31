@@ -41,6 +41,7 @@ import com.laimory.server.timeline.dto.MonthlyDailyRecordListResponse;
 import com.laimory.server.timeline.dto.MonthlyDailyRecordResponse;
 import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineItemResponse;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPlaceRequest;
 import com.laimory.server.timeline.dto.UpdateTimelineEventRequest;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.service.DailyRecordEmotionUpdateService;
@@ -511,6 +512,20 @@ class TimelineRecordControllerTest {
         assertThat(request.getValue().eventType()).isNull();
         assertThat(request.getValue().memo()).isNull();
         assertThat(request.getValue().photosToAdd()).isEmpty();
+        assertThat(request.getValue().latitude()).isNull();
+        assertThat(request.getValue().longitude()).isNull();
+    }
+
+    @Test
+    void updateTimelineEvent_passesCoordinatesFromBody() throws Exception {
+        mockMvc.perform(patch(EVENT_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"latitude\":37.5445,\"longitude\":127.0559}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
+        verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
+        assertThat(request.getValue().latitude()).isEqualTo(37.5445);
+        assertThat(request.getValue().longitude()).isEqualTo(127.0559);
     }
 
     @ParameterizedTest
@@ -586,7 +601,7 @@ class TimelineRecordControllerTest {
         ArgumentCaptor<UpdateTimelineEventRequest> request = ArgumentCaptor.forClass(UpdateTimelineEventRequest.class);
         verify(timelineEventEditService).updateEvent(eq("v1"), eq(SUBJECT_ID), eq(11L), request.capture());
         assertThat(request.getValue()).isEqualTo(
-                new UpdateTimelineEventRequest(null, null, null, null, null, null, List.of()));
+                new UpdateTimelineEventRequest(null, null, null, null, null, null, List.of(), null, null));
     }
 
     @Test
@@ -807,7 +822,8 @@ class TimelineRecordControllerTest {
                 .andExpect(this::assertBodyIsExplicitNull);
 
         // 정규화(strip)·필수 검증은 서비스 책임이다 — 컨트롤러는 원문을 그대로 넘긴다.
-        verify(timelineEventEditService).updatePlace(eq("v1"), eq(SUBJECT_ID), eq(11L), eq(" △△공원 "));
+        verify(timelineEventEditService).updatePlace(eq("v1"), eq(SUBJECT_ID), eq(11L),
+                eq(new UpdateTimelineEventPlaceRequest(" △△공원 ", null, null)));
     }
 
     @Test
@@ -815,7 +831,20 @@ class TimelineRecordControllerTest {
         mockMvc.perform(put(PLACE_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk());
 
-        verify(timelineEventEditService).updatePlace(eq("v1"), eq(SUBJECT_ID), eq(11L), isNull());
+        verify(timelineEventEditService).updatePlace(eq("v1"), eq(SUBJECT_ID), eq(11L),
+                eq(new UpdateTimelineEventPlaceRequest(null, null, null)));
+    }
+
+    @Test
+    void updateTimelineEventPlace_passesCoordinatesFromBody() throws Exception {
+        String body = """
+                {"place": "△△공원", "latitude": 37.5445, "longitude": 127.0559}
+                """;
+        mockMvc.perform(put(PLACE_PATH).with(authenticatedUser(USER_ID)).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+
+        verify(timelineEventEditService).updatePlace(eq("v1"), eq(SUBJECT_ID), eq(11L),
+                eq(new UpdateTimelineEventPlaceRequest("△△공원", 37.5445, 127.0559)));
     }
 
     @Test
@@ -1361,6 +1390,27 @@ class TimelineRecordControllerTest {
         assertThat(request.getValue().endAt()).isNull();
         assertThat(request.getValue().memo()).isNull();
         assertThat(request.getValue().photosToAdd()).isEmpty();
+        assertThat(request.getValue().place()).isNull();
+        assertThat(request.getValue().latitude()).isNull();
+        assertThat(request.getValue().longitude()).isNull();
+    }
+
+    @Test
+    void createTimelineEvent_passesPlaceAndCoordinatesFromBody() throws Exception {
+        String body = """
+                {"eventType":"REST","title":"제목","startAt":"2026-07-08T14:00:00",
+                 "place":" △△공원 ","latitude":37.5445,"longitude":127.0559}
+                """;
+        mockMvc.perform(post(CREATE_EVENT_DATE_PATH).with(authenticatedUser(USER_ID))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+
+        // 정규화·쌍·범위 검증은 서비스 책임이다 — 컨트롤러는 원문을 그대로 넘긴다.
+        ArgumentCaptor<CreateTimelineEventRequest> request = ArgumentCaptor.forClass(CreateTimelineEventRequest.class);
+        verify(timelineEventCreateService).createEvent(eq("v1"), eq(SUBJECT_ID), eq(RECORD_DATE), request.capture());
+        assertThat(request.getValue().place()).isEqualTo(" △△공원 ");
+        assertThat(request.getValue().latitude()).isEqualTo(37.5445);
+        assertThat(request.getValue().longitude()).isEqualTo(127.0559);
     }
 
     @Test

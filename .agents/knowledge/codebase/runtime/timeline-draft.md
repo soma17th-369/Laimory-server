@@ -238,7 +238,7 @@ record인지는 따지지 않는다 — append UX가 없어 빈 DRAFT는 재사�
   컴포넌트를 사용한다.
 - 수동 Event 생성(`POST .../daily-records/{recordDate}/events`, #326)은 AI draft 흐름 밖의 동기 편집
   계열이다 — draft task·Redis stage·dispatch를 전혀 거치지 않고, 기존 record(DRAFT/SAVED)에
-  `question`/`place`/`address`/좌표가 null이고 장소 후보가 없는 Event를 만든다. optional `photosToAdd`가 있으면 Event·PHOTO
+  `question`/`address`가 null이고 장소 후보가 없는 Event를 만든다(`place`·좌표는 선택 입력, 생략하면 null — #616). optional `photosToAdd`가 있으면 Event·PHOTO
   Item·junction을 하나의 transaction으로 commit하고, 실패하면 Event insert까지 rollback한다. 사진
   규칙은 PATCH와 같은 공유 컴포넌트, 상세 필드 규칙은 공통 `TimelineEventInputRules`가 소유하며 +10분
   충돌 보정은 없다(AI 결과 저장 전용). record가 없으면 404이며 DailyRecord를 만들지 않는다(선생성은

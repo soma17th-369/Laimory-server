@@ -33,15 +33,15 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
-| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. 생성 경로는 둘이다 — AI draft 결과 저장과, 기존 하루 기록에 대한 수동 생성(`POST .../daily-records/{recordDate}/events`, DRAFT/SAVED 모두 허용). 수동 생성 Event는 AI 결과 필드 `question`/`place`/`address`/좌표가 항상 null이고 장소 후보가 없으며 optional `photosToAdd`로 PHOTO Item을 함께 연결할 수 있다(없으면 `items=[]`; 생성 뒤 Event PATCH로 추가하는 경로도 유지). |
+| 타임라인 이벤트 | Timeline Event | 현재 구현 | 사용자에게 보이는 하루 타임라인의 이벤트 단위다. 생성 경로는 둘이다 — AI draft 결과 저장과, 기존 하루 기록에 대한 수동 생성(`POST .../daily-records/{recordDate}/events`, DRAFT/SAVED 모두 허용). 수동 생성 Event는 `question`/`address`가 항상 null이고 장소 후보가 없으며(`place`·좌표는 선택 입력 — #616) optional `photosToAdd`로 PHOTO Item을 함께 연결할 수 있다(없으면 `items=[]`; 생성 뒤 Event PATCH로 추가하는 경로도 유지). |
 | 이벤트 타입 | Event Type | 현재 구현 | Event 자체의 분류다. Item Type(source 종류)과 독립이며 서로 변환·추론하지 않는다. `TimelineEventType` enum: `WAKE_UP`(기상), `SLEEP`(수면), `MOVEMENT`(이동), `CALENDAR_EVENT`(캘린더 일정), `MEAL`(식사), `PHOTO_MOMENT`(사진 기반 순간), `MEETING`(미팅), `CLASS`(수업), `WORK`(업무), `EXERCISE`(운동), `SOCIAL`(사회 활동), `REST`(휴식), `STAY`(머무름), `SHOPPING`(쇼핑), `CULTURE`(문화생활), `ERRAND`(개인적인 용무), `UNKNOWN`(분류할 수 없음). `UNKNOWN`은 기존 데이터·구버전 writer 컬럼 생략·AI 미판별의 fallback sentinel이다. AI가 어떤 입력을 어떤 타입으로 분류하는지(경계·우선순위)는 미구현·별도 결정이다. |
 | 제목 | Title | 현재 구현 | 이벤트의 대표 문구다. AI 결과를 서버가 저장하며 사용자가 편집할 수 있다. 장소를 담지 않는다(#612). |
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. 장소 자리에 자리 표시 `{place}`를 담은 템플릿일 수 있다(#612). |
 | 장소 자리 표시 | Place Placeholder | 현재 구현 | subtitle 안의 `{place}` literal(`TimelineEvent.PLACE_PLACEHOLDER`)이다. DB·앱 응답에는 그대로 두고, 클라가 표시할 때와 User Memory 전달 DTO에서 현재 `place`로 채운다. |
-| 장소 | Place | 현재 구현 | Event당 하나의 장소명(`place`)이다. AI 결과 저장이 초기값을 채우고(장소 후보가 있으면 1번 후보) 사용자가 장소 지정 PUT으로 바꾼다. source item payload의 복수 `places`(주변 장소 목록)와 다른 개념이다. |
+| 장소 | Place | 현재 구현 | Event당 하나의 장소명(`place`)이다. AI 결과 저장이 초기값을 채우거나(장소 후보가 있으면 1번 후보) 수동 생성이 선택 입력으로 받고, 사용자가 장소 지정 PUT으로 바꾼다. source item payload의 복수 `places`(주변 장소 목록)와 다른 개념이다. |
 | 장소 후보 | Place Candidate | 현재 구현 | 장소가 애매한 Event에 AI가 우선순위 순서로 준 후보 장소명(`timeline_event_place_candidates`, 응답 `placeCandidates[{name}]`)이다. 순서 = id 순서 = 우선순위이고 좌표가 없다. 장소를 지정해도 남으며 Event 삭제 때만 지운다. |
-| 장소 지정 | Place Assignment | 현재 구현 | `PUT .../events/{timelineEventId}/place`로 Event `place`만 바꾸는 사용자 행위다. 후보 중에서 고르거나 직접 입력할 수 있다. "후보 해소·선택 완료" 같은 상태는 없다. |
-| 이벤트 좌표 | Event Coordinates | 현재 구현 | AI가 Event마다 주는 대표 좌표(`latitude`·`longitude`) — 사용자가 실제로 있던 관측 위치(이동 Event는 도착지)라 장소를 바꿔도 변하지 않는다. 항상 쌍이며 편집 경로가 없다. |
+| 장소 지정 | Place Assignment | 현재 구현 | `PUT .../events/{timelineEventId}/place`로 Event `place`를 바꾸는 사용자 행위다. 후보 중에서 고르거나 직접 입력할 수 있고, 지도로 고르면 좌표 쌍도 함께 바꿀 수 있다(#616). "후보 해소·선택 완료" 같은 상태는 없다. |
+| 이벤트 좌표 | Event Coordinates | 현재 구현 | Event 대표 좌표(`latitude`·`longitude`)다. AI가 준 관측 위치(이동 Event는 도착지)가 초기값이고, 사용자가 수동 생성·Event PATCH·장소 지정에서 보낸 좌표로 바뀐다(#616). 항상 쌍이다. |
 | 질문 | Question | 현재 구현 | AI가 이벤트마다 생성해 사용자에게 되묻는 문장이다. AI 결과 저장에서만 채워지는 nullable 값(trim 후 최대 255자, 공백은 null)이며 일별·단건 조회 응답에 그대로 실린다. 사용자 편집 API와 답변 저장은 미구현이다. |
 | 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. Event PATCH에서 선택적으로 작성·수정·제거한다 — 필드 부재·null은 변경 없음, 빈 문자열·공백뿐이면 제거, 그 외는 trim 없이 원문 저장(최대 500자 — User Memory 갱신 접수 계약의 상한). PUT memo endpoint는 다른 필드 없이 memo만 교체하며, 필드 부재·null·blank 모두 제거라는 점이 PATCH와 다르다. 두 편집 API 모두 성공 시 `body=null`을 반환한다. |
 | 이벤트 시작 시각 | Start At | 현재 구현 | 이벤트 시간 범위의 시작이다. 필수이며 읽을 때 정렬 기준이다. |

@@ -111,7 +111,8 @@ Event 하나와 연결 Item을 기존 `TimelineEventResponse`로 반환한다. E
 
 `TimelineEventResponse`는 일별 목록·단건 조회 모두 nullable `question`(AI가 Event마다 만든 질문)과
 nullable `place`·`address`(Event 장소명과 그 주소)를 포함한다. 값이 없으면 `null`이다. `question`·`address`는
-사용자 편집 API 입력 계약에 없어 앱이 바꿀 수 없는 읽기 전용 필드이고, `place`는 아래 장소 지정 API로만 바꾼다.
+사용자 편집 API 입력 계약에 없어 앱이 바꿀 수 없는 읽기 전용 필드이고, `place`는 수동 생성 때 선택 입력으로 받고
+생성 뒤에는 아래 장소 지정 API로만 바꾼다.
 draft polling SUCCESS의 `result`도 같은 DTO라 그대로 실린다.
 
 장소 후보·대표 좌표(#612)도 같은 DTO의 필드다 — `TimelineEventResponse`를 싣는 응답 전부(기간 목록·일별·by-id·
@@ -119,24 +120,30 @@ Event 단건·수동 생성 응답·draft SUCCESS polling)에 실리고, 월별 
 
 - `subtitle`: 장소 자리 표시 `{place}`가 든 템플릿일 수 있다. 서버는 저장한 그대로 내려주고, 클라가 표시할 때
   `{place}`를 현재 `place`로 채운다. `title`에는 장소가 없다.
-- `latitude`·`longitude`: nullable, 항상 쌍. AI 결과에서만 채워지는 관측 위치라 장소를 바꿔도 변하지 않고 편집
-  경로가 없다(수동 생성 Event는 null).
+- `latitude`·`longitude`: nullable, 항상 쌍. AI 결과의 관측 위치(이동은 도착지)가 초기값이고, 사용자가 수동 생성·
+  PATCH·장소 지정에서 좌표 쌍을 보내면 그 값으로 바뀐다(#616). 수동 생성에서 생략하면 null이다. 세 입력 경로는
+  `TimelineEventInputRules`의 같은 규칙을 쓴다 — 한쪽만이거나 범위 밖(위도 -90~90, 경도 -180~180, NaN 포함)이면
+  400 `-400`이다.
 - `placeCandidates: [{name}]`: 우선순위 순서, 없으면 `[]`. 장소를 지정한 뒤·SAVED 날에도 그대로 내려간다.
   목록 조회는 event id 묶음으로 후보를 한 번에 읽는다(N+1 없음).
 
-`PUT /a/api/{version}/timeline/events/{timelineEventId}/place` `{"place": "..."}`는 Event `place`만 교체한다(#612).
+`PUT /a/api/{version}/timeline/events/{timelineEventId}/place` `{"place": "...", "latitude"?, "longitude"?}`는
+Event `place`를 교체하고(#612), 좌표 쌍을 함께 보내면 좌표도 교체한다(#616 — 지도로 고른 장소). 좌표를 생략하면
+기존 좌표를 유지한다.
 `place`는 필수(누락·null·공백뿐 400 `-400`)이고 strip 후 최대 255자다(초과 400). 후보 중 하나인지 검사하지 않고
 (직접 입력 허용) 후보 없는 Event에도 호출할 수 있다. 한 transaction에서 소유·활성 Event를 확인(없음·비소유 404
-`-404`)한 뒤 `place`만 바꾸며 `title`·`subtitle`·좌표·`address`·장소 후보는 그대로다. 같은 값 반복 호출은 결과가
+`-404`)한 뒤 `place`(와 보낸 좌표)만 바꾸며 `title`·`subtitle`·`address`·장소 후보는 그대로다 — 지도로 다른
+위치를 골라도 `address`는 이전 값으로 남는다(클라 미사용). 같은 값 반복 호출은 결과가
 같고, 성공은 `200 + body=null`이다. 기존 PATCH 계약은 바뀌지 않았다 — subtitle PATCH로 `{place}` 템플릿 대신
 채운 문장을 보내면 이후 장소 변경이 subtitle에 반영되지 않는다(템플릿 유지 여부는 Android 계약).
 
 `PATCH /a/api/{version}/timeline/events/{timelineEventId}`는 기존 Event 상세 편집 endpoint 하나에서
-선택적 `title`·`subtitle`·`startAt`·`endAt`·`eventType`·`memo`와 `photosToAdd`를 처리한다.
+선택적 `title`·`subtitle`·`startAt`·`endAt`·`eventType`·`memo`·`latitude`·`longitude`와 `photosToAdd`를 처리한다.
 `title`·`startAt`·`eventType`은 누락·null이면 유지하며, title 값은 strip 후 1~255자여야 한다.
 `subtitle`·`memo`는 누락·null이면 유지, 빈 문자열·공백뿐이면 제거다(subtitle은 strip 후 최대 255자,
 memo는 trim 없이 원문 최대 500자). **endAt만 누락·null 모두 비움(단일 시점)**이므로 종료 시각을
 유지하려면 현재 값을 보내야 한다. 시간 범위는 transaction 안에서 기존 startAt과 병합한 뒤 검증한다.
+`latitude`·`longitude`는 둘 다 보내면 Event 좌표를 교체하고 둘 다 누락·null이면 유지한다(지우는 방법은 없다).
 `photosToAdd`는 누락·null·빈 배열 모두 Item 변경 없음이며 비배열은 400이다. 배열 원소는
 `rawId`·`startAt`·`endAt`과 PHOTO payload(`filename`, `clientPhotoUri`, `latitude`, `longitude`)만 받는다 —
 nullable startAt/endAt은 MySQL 저장 정밀도에 맞춰 초 단위만 허용하며 소수 초는 400이다.
@@ -193,14 +200,16 @@ DRAFT의 최초 감정 확정은 save API가 계속 담당하며, DRAFT에 요�
 `eventType`·`title`·`startAt`만 필수다(누락·null은 Bean Validation으로 서비스 호출 전 400).
 `eventType`은 `UNKNOWN` 포함 기존 literal만 받는다. `subtitle`·`endAt`은 누락·null 모두 비움이고,
 `memo`는 optional 키다(누락/null/blank는 메모 없음, 그 외 trim 없이 원문 최대 500자).
-`photosToAdd`도 optional 키다(누락/null/빈 배열은 사진 없음, 비배열은 400). 사진 입력·개수·
+`photosToAdd`도 optional 키다(누락/null/빈 배열은 사진 없음, 비배열은 400). `place`도 optional 키다
+(누락/null/blank는 장소 없음, 그 외 strip 후 최대 255자 — 장소 지정 PUT과 같은 길이 규칙). `latitude`·`longitude`도
+optional이며 생략하면 좌표 없음이다. 사진 입력·개수·
 rawId 중복 규칙은 Event PATCH와 같으며(새 Event라 사진은 항상 새 Item) PHOTO startAt/endAt의 소수 초도
 400이다. Event·PHOTO Item·junction은 한 transaction으로
 commit된다. 클라이언트는 presign·S3 업로드 성공 뒤 요청하며 서버는 S3 object 존재를 확인하지 않는다.
 사진 수 초과는 400 `-1004`다. 상세 필드 규칙(title strip 1~255자, subtitle strip 최대 255자, endAt은 startAt 이전 불가)은
 Event PATCH와 같은 규칙을 공유하며, 시각은 보낸 값 그대로 저장한다(+10분 충돌 보정 없음). 성공은
 `200 + ApiResponse<TimelineEventResponse>` — 생성된 `timelineEventId`와 입력을 반영한 Event,
-`question`/`place`/`address`=null, 연결 PHOTO가 조회 경로와 같은 순서로 포함된 `items`다(사진 없으면
+`question`/`address`=null, 연결 PHOTO가 조회 경로와 같은 순서로 포함된 `items`다(사진 없으면
 `items=[]`). body는 있는데 Content-Type이 없거나 JSON이 아니면 415 `-415`이고, User Memory 갱신은
 새로 등록하지 않는다.
 

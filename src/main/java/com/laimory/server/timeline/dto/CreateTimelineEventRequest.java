@@ -9,7 +9,7 @@ import java.util.List;
 /**
  * 타임라인 Event 수동 생성 요청. eventType·title·startAt의 필수값은 Bean Validation이,
  * 길이·공백 정규화·시간 범위·사진 규칙은 서비스가 검증한다.
- * subtitle·endAt·memo는 누락과 null 모두 비움이며, photosToAdd는 빈 목록으로 정규화한다.
+ * subtitle·endAt·memo·place·좌표는 누락과 null 모두 비움이며, photosToAdd는 빈 목록으로 정규화한다.
  */
 public record CreateTimelineEventRequest(
         @NotNull
@@ -38,7 +38,18 @@ public record CreateTimelineEventRequest(
                 description = "함께 생성·연결할 PHOTO Item 목록. 누락·null·빈 배열은 사진 없음. "
                         + "검증·중복·개수·오류 규칙은 Event PATCH photosToAdd와 동일하며, "
                         + "클라이언트가 presign·S3 업로드 성공을 확인한 뒤 보낸다.")
-        List<UpdateTimelineEventPhotoRequest> photosToAdd
+        List<UpdateTimelineEventPhotoRequest> photosToAdd,
+        @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED, nullable = true, example = "△△공원",
+                description = "이벤트 장소명. 누락·null·공백뿐이면 장소 없음(null 저장). 그 외 앞뒤 공백 제거 후 "
+                        + "최대 255자. 좌표와 독립이다.")
+        String place,
+        @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED, nullable = true, example = "37.5445",
+                description = "이벤트 대표 좌표의 위도(-90~90). longitude와 둘 다 보내거나 둘 다 생략한다 — "
+                        + "한쪽만이거나 범위 밖이면 400. 생략하면 좌표 없음(null 저장).")
+        Double latitude,
+        @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED, nullable = true, example = "127.0559",
+                description = "이벤트 대표 좌표의 경도(-180~180). latitude와 쌍이다.")
+        Double longitude
 ) {
     public CreateTimelineEventRequest {
         // null 원소는 그대로 보존해 서비스의 PHOTO 입력 검증에서 거절한다.

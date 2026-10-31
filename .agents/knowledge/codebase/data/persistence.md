@@ -313,11 +313,14 @@ NULL). 감정 수정은 비트랜잭션 사전 조회 → 조건부 UPDATE 우�
 없는 `String`(Hibernate 기본 255)이다. `place`·`address`(#330)도 같은 계약의 `VARCHAR(255) NULL`이다 —
 조회 조건이 아닌 표시 데이터라 index를 두지 않는다. 세 컬럼 모두 V1에 포함되어 있으며, 이후 구조 변경은
 후속 migration으로 JPA 검증 전에 반영한다. `address`는 AI 결과 저장 transaction만 쓰고, `place`는 AI 결과 저장이
-초기값을 쓴 뒤 장소 지정 PUT(#612)이 dirty-checking으로 교체한다(`TimelineEvent`는 `@DynamicUpdate`).
+초기값을 쓰거나 수동 생성이 선택 입력으로 쓴 뒤(#616) 장소 지정 PUT(#612)이 dirty-checking으로 교체한다
+(`TimelineEvent`는 `@DynamicUpdate`).
 
 `timeline_events.latitude`·`longitude`(V14, #612)는 `DOUBLE NULL` 2컬럼이다(POINT 아님 — 공간 검색이 없고
-nullable이라 SPATIAL INDEX를 걸 수 없다). AI 결과 저장만 쓰고 편집 경로가 없으며, 항상 함께 NULL이거나
-함께 값이다(앱 검증). 기존 행은 NULL이다.
+nullable이라 SPATIAL INDEX를 걸 수 없다). AI 결과 저장이 초기값을 쓰고, 수동 생성·Event PATCH·장소 지정 PUT이
+사용자가 보낸 좌표 쌍으로 쓴다(#616). 항상 함께 NULL이거나 함께 값이다(앱 검증). 기존 행은 NULL이다. 좌표는
+PATCH와 장소 지정 PUT이 함께 쓰는 필드 그룹이라, 두 요청이 같은 Event에 겹치고 한쪽의 위도나 경도 하나가 기존
+값과 같으면 `@DynamicUpdate`가 그 컬럼을 SET에서 빼 두 요청의 값이 섞일 수 있다 — 막지 않는다.
 
 `timeline_event_place_candidates`(V14, #612)는 `(timeline_event_place_candidate_id PK, timeline_event_id, name
 VARCHAR(255) NOT NULL, BaseEntity 감사 컬럼)`이다. `timeline_event_id`는 `timeline_events` FK `ON DELETE CASCADE`
@@ -565,7 +568,7 @@ S3 삭제가 멱등이라 모두 `Deleted`로 수렴해 지워진다(#551).
 - staging·final payload의 텍스트 값, AI 결과가 저장한 `timeline_events`의
   `title`/`subtitle`/`question`/`place`/`address`와 장소 후보 `name`, `user_memories.memory`는 v1 privacy 치환
   후의 값이다(`clientPhotoUri`만 storage 원문 유지 — AI 전달에서만 치환). 사용자 편집(Event PATCH/memo PUT/
-  place PUT)의 title·subtitle·memo·place는 원문 저장이다.
+  place PUT·수동 Event 생성)의 title·subtitle·memo·place는 원문 저장이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다(승인 예외: `CacheConfig`의 Spring Cache
   Redis manager와 그 캐시 구현 `SingleFlightRedisCacheManager` — 같은 key prefix를 붙인다).
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.
