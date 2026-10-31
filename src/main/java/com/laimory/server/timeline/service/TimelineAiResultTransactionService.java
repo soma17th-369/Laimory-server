@@ -212,7 +212,12 @@ public class TimelineAiResultTransactionService {
                 // 공백 이름이라 버려질 후보도 받은 그대로 검사한다.
                 for (AiTimelineResultRequest.PlaceCandidate candidate : event.placeCandidates()) {
                     if (candidate != null) {
-                        TimelineEventInputRules.requireValidCoordinates(candidate.latitude(), candidate.longitude());
+                        try {
+                            TimelineEventInputRules.requireValidCoordinates(candidate.latitude(), candidate.longitude());
+                        } catch (IllegalArgumentException e) {
+                            throw new IllegalArgumentException(
+                                    "event place candidate " + e.getMessage() + ": index=" + i, e);
+                        }
                     }
                 }
             }

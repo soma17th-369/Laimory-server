@@ -399,7 +399,8 @@ class TimelineAiResultServiceTest {
 
         assertThatThrownBy(() -> service.storeResult(VERSION, TASK_ID, TASK_TOKEN,
                 resultWithPlaceFields(null, null, null, null, candidates)))
-                .isInstanceOf(IllegalArgumentException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageEndingWith("index=0");
         verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
         verifyNoInteractions(timelineAiResultTransactionService);
     }
