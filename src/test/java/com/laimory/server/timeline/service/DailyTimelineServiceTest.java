@@ -331,8 +331,8 @@ class DailyTimelineServiceTest {
         when(timelineEventItemService.findByTimelineEventIds(List.of(11L, 12L))).thenReturn(List.of());
         when(timelineItemService.findByIds(List.of())).thenReturn(List.of());
         when(timelineEventPlaceCandidateService.findByTimelineEventIds(List.of(11L, 12L))).thenReturn(List.of(
-                TimelineEventPlaceCandidate.of(11L, "성수동 카페"),
-                TimelineEventPlaceCandidate.of(11L, "△△공원")));
+                TimelineEventPlaceCandidate.of(11L, "성수동 카페", null, null),
+                TimelineEventPlaceCandidate.of(11L, "△△공원", null, null)));
 
         DailyTimelinesResponse result = dailyTimelineService.getDailyTimelines("v1", SUBJECT_ID);
 

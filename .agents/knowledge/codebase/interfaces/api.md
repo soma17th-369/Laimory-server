@@ -120,11 +120,15 @@ Event 단건·수동 생성 응답·draft SUCCESS polling)에 실리고, 월별 
 
 - `subtitle`: 장소 자리 표시 `{place}`가 든 템플릿일 수 있다. 서버는 저장한 그대로 내려주고, 클라가 표시할 때
   `{place}`를 현재 `place`로 채운다. `title`에는 장소가 없다.
-- `latitude`·`longitude`: nullable, 항상 쌍. AI 결과의 관측 위치(이동은 도착지)가 초기값이고, 사용자가 수동 생성·
+- `latitude`·`longitude`: nullable, 항상 쌍. AI 결과의 1번 장소 후보 좌표(#620), 그것이 없으면 관측 위치(이동은
+  도착지)가 초기값이고, 사용자가 수동 생성·
   PATCH·장소 지정에서 좌표 쌍을 보내면 그 값으로 바뀐다(#616). 수동 생성에서 생략하면 null이다. 세 입력 경로는
   `TimelineEventInputRules`의 같은 규칙을 쓴다 — 한쪽만이거나 범위 밖(위도 -90~90, 경도 -180~180, NaN 포함)이면
   400 `-400`이다.
-- `placeCandidates: [{name}]`: 우선순위 순서, 없으면 `[]`. 장소를 지정한 뒤·SAVED 날에도 그대로 내려간다.
+- `placeCandidates: [{name, latitude, longitude}]`: 우선순위 순서, 없으면 `[]`. 장소를 지정한 뒤·SAVED 날에도
+  그대로 내려간다. 후보 좌표(#620)는 그 후보 장소의 위치로 항상 쌍이고, 좌표 없는 후보(AI가 생략·#620 이전 후보)는
+  `null` 쌍이다. 저장 때 장소 지정 PUT과 같은 규칙으로 검사했으므로 앱이 고른 후보의 이름·좌표를 그대로 PUT에
+  보내면 통과한다.
   목록 조회는 event id 묶음으로 후보를 한 번에 읽는다(N+1 없음).
 
 `PUT /a/api/{version}/timeline/events/{timelineEventId}/place` `{"place": "...", "latitude"?, "longitude"?}`는

@@ -323,9 +323,11 @@ PATCH와 장소 지정 PUT이 함께 쓰는 필드 그룹이라, 두 요청이 �
 값과 같으면 `@DynamicUpdate`가 그 컬럼을 SET에서 빼 두 요청의 값이 섞일 수 있다 — 막지 않는다.
 
 `timeline_event_place_candidates`(V14, #612)는 `(timeline_event_place_candidate_id PK, timeline_event_id, name
-VARCHAR(255) NOT NULL, BaseEntity 감사 컬럼)`이다. `timeline_event_id`는 `timeline_events` FK `ON DELETE CASCADE`
+VARCHAR(255) NOT NULL, latitude DOUBLE NULL, longitude DOUBLE NULL, BaseEntity 감사 컬럼)`이다. 좌표 2컬럼(V15, #620)은
+그 후보 장소의 위치이며 항상 함께 NULL이거나 함께 값이다(결과 저장 검증). V15 이전 후보 행은 NULL이다. `timeline_event_id`는 `timeline_events` FK `ON DELETE CASCADE`
 이고 `idx_timeline_event_place_candidates_event`가 FK·묶음 조회(IN)를 받친다. 우선순위 전용 컬럼은 없다 —
-AI 결과 저장 transaction이 받은 순서대로 INSERT하고 조회는 `ORDER BY id`다. writer는 AI 결과 저장(INSERT)과
+AI 결과 저장 transaction이 받은 순서대로 INSERT하고 조회는 `ORDER BY id`다. 1번 후보에 좌표가 있으면 같은
+transaction이 그 좌표를 `timeline_events` 좌표 초기값으로 쓴다(#620). writer는 AI 결과 저장(INSERT)과
 Event·DailyRecord soft delete transaction(hard DELETE)뿐이고, 장소 지정은 후보를 건드리지 않는다. 계정 삭제는
 `daily_records` → `timeline_events` → 후보 FK CASCADE로 지운다.
 
@@ -518,6 +520,9 @@ Event PATCH와 Event 생성 POST의 수동 PHOTO는 client가 업로드 완료 �
 draft cleanup은 PK MOD 담당에서 보관기간이 지난 source row를 slot당 최대 250개 한 번 일반 조회하고
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk
 delete한다. PHOTO payload/filename이 깨졌으면 기존 정책대로 S3 orphan을 허용하고 source row는 지운다.
+draft cleanup과 orphan 스위퍼는 저장된 PHOTO payload를 `PhotoPayload`로 통째로 읽지 않고 `filename`·`photoUrl`
+필드만 JSON 그대로 읽는다(#620) — 주변 장소 목록 `places`의 원소 형태가 행마다 다를 수 있어 한 타입으로 읽으면
+일부 행에서 파싱이 실패해 S3 삭제를 건너뛴다. 저장본 payload를 새로 읽는 코드도 이 규칙을 따른다.
 명시적 S3 실패·응답 누락·SDK 예외 PHOTO row는 다음 일일 실행까지 남는다.
 Event-Item 연결 해제는 junction만 hard delete하고 즉시 성공한다(Event/DailyRecord 삭제는 soft delete, #568).
 어느 삭제 API도 Item을 분류하거나 job을 만들지 않는다 — 연결을 잃은 Item과 그 S3 사진은 orphan 스위퍼가
