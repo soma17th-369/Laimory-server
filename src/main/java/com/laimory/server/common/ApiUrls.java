@@ -5,6 +5,7 @@ package com.laimory.server.common;
  *
  * <p>{@code *_URL} 상수는 컨트롤러 클래스 레벨 {@code @RequestMapping}용이다(버전이 정규식 path variable).
  * 버전은 컨트롤러가 {@code @PathVariable}로 받아 Service에 넘기고, 버전별 동작 분기는 Service 계층이 해결한다.
+ * 분기는 {@link ApiVersion}으로 읽어 대소 비교한다.
  */
 public final class ApiUrls {
 

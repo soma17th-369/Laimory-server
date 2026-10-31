@@ -36,7 +36,8 @@ exact-one 조회를 사용한다. 관리자 약관의 같거나 낮은 버전·P
 Origin/CSRF 거절은 403 `-403`이고 이는 앱 약관 동의 gate와 무관하다.
 
 `version`은 `ApiUrls.VERSION` 정규식 path variable을 사용한다. controller는 값을 service로 전달하고
-version별 동작은 service가 결정한다.
+version별 동작은 service가 결정한다. 분기는 문자열 비교 대신 `ApiVersion.of(...)`로 읽어
+`isLowerThan` 같은 대소 비교로 쓴다(현재 분기는 AI 입력 조회의 `v2` 미만 `places` 이름 변환 하나다).
 
 보호 operation 36개(timeline 20 + push-registrations PUT/DELETE + push-settings GET·PUT 2종 +
 user GET/DELETE + terms agreements GET/POST + initializer GET + onboarding complete POST +

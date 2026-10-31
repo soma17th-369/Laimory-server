@@ -3,6 +3,7 @@ package com.laimory.server.timeline.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.laimory.server.common.ApiVersion;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.privacy.RedactionType;
@@ -44,9 +45,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class TimelineAiTaskInputService {
 
-    /** 주변 장소 목록을 이름 문자열로 내는 입력 버전. 그 밖의 버전은 저장본 그대로다(#620). */
-    private static final String PLACE_NAMES_ONLY_VERSION = "v1";
-
     private final TimelineTaskService timelineTaskService;
     private final DailyRecordService dailyRecordService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
@@ -66,8 +64,8 @@ public class TimelineAiTaskInputService {
     }
 
     public AiTimelineTaskInputResponse getInput(String applicationVersion, String taskId, String taskToken) {
-        // 버전별 처리 분기 지점: v1은 주변 장소 목록을 이름 문자열로 낸다(#620). 그 밖의 버전은 저장본 그대로다.
-        boolean placeNamesOnly = PLACE_NAMES_ONLY_VERSION.equals(applicationVersion);
+        // 버전별 처리 분기 지점: v2 미만은 주변 장소 목록을 이름 문자열로 낸다(#620). v2부터 저장본 그대로다.
+        boolean placeNamesOnly = ApiVersion.of(applicationVersion).isLowerThan(ApiVersion.V2);
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
         boolean replay = !task.matchesToken(taskToken);
@@ -158,7 +156,7 @@ public class TimelineAiTaskInputService {
     }
 
     /**
-     * {@code v1} 입력은 주변 장소 목록({@code places}, MOVEMENT는 {@code start}·{@code end}의 {@code places})을
+     * {@code v2} 미만 입력은 주변 장소 목록({@code places}, MOVEMENT는 {@code start}·{@code end}의 {@code places})을
      * 이름 문자열 배열로 낸다(#620). 저장본 원소는 {@code {name, latitude, longitude}} 객체이거나 옛 행의 이름
      * 문자열이다. {@code v1} AI는 문자열만 검증하고 통과 못 한 아이템을 버리므로 객체를 이름으로 바꾸고, 문자열은 그대로
      * 둔다. {@code v2} 이상은 저장본을 그대로 낸다.
