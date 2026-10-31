@@ -64,8 +64,6 @@ public class TimelineAiTaskInputService {
     }
 
     public AiTimelineTaskInputResponse getInput(String applicationVersion, String taskId, String taskToken) {
-        // 버전별 처리 분기 지점: v2 미만은 주변 장소 목록을 이름 문자열로 낸다(#620). v2부터 저장본 그대로다.
-        boolean placeNamesOnly = ApiVersion.of(applicationVersion).isLowerThan(ApiVersion.of("v2"));
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
         boolean replay = !task.matchesToken(taskToken);
@@ -95,12 +93,18 @@ public class TimelineAiTaskInputService {
         }
         String resultToken = TaskTokens.generate();
 
+        List<AiTimelineTaskInputResponse.SourceItem> sourceItems =
+                sources.stream().map(source -> toSourceItem(source, recordZone)).toList();
+        // 버전별 처리 분기 지점: v2 미만은 주변 장소 목록을 이름 문자열로 낸다(#620). v2부터 저장본 그대로다.
+        if (ApiVersion.of(applicationVersion).isLowerThan(ApiVersion.of("v2"))) {
+            sourceItems = sourceItems.stream().map(TimelineAiTaskInputService::withPlaceNames).toList();
+        }
         AiTimelineTaskInputResponse response = new AiTimelineTaskInputResponse(
                 taskId,
                 record.getRecordDate(),
                 record.getRecordTimezone(),
                 toOffsetWindow(task.timelineWindow(), recordZone),
-                sources.stream().map(source -> toSourceItem(source, recordZone, placeNamesOnly)).toList(),
+                sourceItems,
                 resultToken);
 
         // 재시도는 receipt를 그대로 둔다 — previousTokenHash는 계속 최초 input token이고, 창을 갱신하면
@@ -147,12 +151,16 @@ public class TimelineAiTaskInputService {
     }
 
     private static AiTimelineTaskInputResponse.SourceItem toSourceItem(
-            TimelineDraftSourceItem source, ZoneId recordZone, boolean placeNamesOnly) {
-        JsonNode payload = redactClientPhotoUri(source.getPayload());
+            TimelineDraftSourceItem source, ZoneId recordZone) {
         return new AiTimelineTaskInputResponse.SourceItem(
                 source.getRawId(), source.getItemType(),
                 toOffset(source.getStartAt(), recordZone), toOffset(source.getEndAt(), recordZone),
-                placeNamesOnly ? placesAsNames(payload) : payload);
+                redactClientPhotoUri(source.getPayload()));
+    }
+
+    private static AiTimelineTaskInputResponse.SourceItem withPlaceNames(AiTimelineTaskInputResponse.SourceItem item) {
+        return new AiTimelineTaskInputResponse.SourceItem(
+                item.rawId(), item.itemType(), item.startAt(), item.endAt(), placesAsNames(item.payload()));
     }
 
     /**
