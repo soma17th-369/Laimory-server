@@ -12,9 +12,9 @@ class ApiVersionTest {
 
     @Test
     void comparesByNumberNotByString() {
-        assertThat(ApiVersion.of("v1").isLowerThan(ApiVersion.V2)).isTrue();
-        assertThat(ApiVersion.of("v2").isLowerThan(ApiVersion.V2)).isFalse();
-        assertThat(ApiVersion.of("v10").isLowerThan(ApiVersion.V2)).isFalse();
+        assertThat(ApiVersion.of("v1").isLowerThan(ApiVersion.of("v2"))).isTrue();
+        assertThat(ApiVersion.of("v2").isLowerThan(ApiVersion.of("v2"))).isFalse();
+        assertThat(ApiVersion.of("v10").isLowerThan(ApiVersion.of("v2"))).isFalse();
     }
 
     @ParameterizedTest

@@ -8,8 +8,6 @@ import java.util.regex.Pattern;
  */
 public record ApiVersion(int number) {
 
-    public static final ApiVersion V2 = new ApiVersion(2);
-
     private static final Pattern FORMAT = Pattern.compile("v\\d+");
 
     /** {@code v<숫자>} 형식만 받는다. 경로 정규식을 통과해도 int 범위를 넘으면 거절한다. */

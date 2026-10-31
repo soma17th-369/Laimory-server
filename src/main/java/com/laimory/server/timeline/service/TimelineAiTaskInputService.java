@@ -65,7 +65,7 @@ public class TimelineAiTaskInputService {
 
     public AiTimelineTaskInputResponse getInput(String applicationVersion, String taskId, String taskToken) {
         // 버전별 처리 분기 지점: v2 미만은 주변 장소 목록을 이름 문자열로 낸다(#620). v2부터 저장본 그대로다.
-        boolean placeNamesOnly = ApiVersion.of(applicationVersion).isLowerThan(ApiVersion.V2);
+        boolean placeNamesOnly = ApiVersion.of(applicationVersion).isLowerThan(ApiVersion.of("v2"));
         TimelineDraftTask task = timelineTaskService.find(taskId)
                 .orElseThrow(() -> new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND));
         boolean replay = !task.matchesToken(taskToken);
