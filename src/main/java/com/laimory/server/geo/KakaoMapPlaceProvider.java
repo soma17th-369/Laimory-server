@@ -104,7 +104,8 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
 
     /**
      * coord2address의 건물명은 별도 필드 없이 places 맨 앞에 합류한다(규격에 건물명 필드 없음) —
-     * keyword 검색에 등록 장소가 없는 건물(오피스 등)의 이름을 잃지 않기 위함.
+     * keyword 검색에 등록 장소가 없는 건물(오피스 등)의 이름을 잃지 않기 위함. coord2address는 건물 좌표를 주지
+     * 않으므로 건물명의 좌표는 조회한 관측 좌표다(#620).
      *
      * <p>keyword 실패는 <b>분류를 가리지 않고</b> 빈 장소 목록으로 강등한다(#259) — 주소는 이미 확보했고
      * keyword가 왜 실패했는지는 그 주소의 유효성과 무관하다. 범주별로 갈라 일부만 강등하면 "어떤 실패는
@@ -120,7 +121,8 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
                     .flatMap(address -> fetchPlaces(address, latitude, longitude, calls)
                             .onErrorResume(MapPlaceLookupException.class, failure -> Mono.just(List.of()))
                             .map(places -> new GeoPlace(
-                                    address.address(), mergeBuildingName(address.buildingName(), places))))
+                                    address.address(),
+                                    mergeBuildingName(address.buildingName(), latitude, longitude, places))))
                     .doOnEach(signal -> logLookupSuccess(signal, calls, startNanos));
         });
     }
@@ -145,19 +147,21 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
                 });
     }
 
-    private Mono<List<String>> fetchPlaces(KakaoAddress address, double latitude, double longitude,
+    private Mono<List<NearbyPlace>> fetchPlaces(KakaoAddress address, double latitude, double longitude,
             AtomicInteger calls) {
         // 주소가 없으면(도로 위·공터 등) keyword 질의어가 없으므로 장소 검색을 생략한다 — 정상 빈 결과.
         return address.address() == null
                 ? Mono.just(List.of())
-                : fetchNearbyPlaceNames(address.address(), latitude, longitude, calls);
+                : fetchNearbyPlaces(address.address(), latitude, longitude, calls);
     }
 
     /**
      * 주소를 질의어로 keyword 검색 1콜 — 주소 keyword와 반경에 매칭된 장소를 좌표 기준 거리순으로 가져온다.
      * 단일 콜이라 응답의 {@code sort=distance} 순서를 그대로 신뢰한다(전역 병합 정렬·id dedupe 불필요).
+     * 장소 좌표는 document의 {@code y}(위도)·{@code x}(경도) 문자열이다 — 둘 중 하나라도 없거나 유한한 숫자가
+     * 아니면 그 장소를 버리고 최대 개수에도 세지 않는다(#620, 주변 장소는 항상 좌표를 가진다).
      */
-    private Mono<List<String>> fetchNearbyPlaceNames(String query, double latitude, double longitude,
+    private Mono<List<NearbyPlace>> fetchNearbyPlaces(String query, double latitude, double longitude,
             AtomicInteger calls) {
         return fetchDocuments(ENDPOINT_KEYWORD, calls,
                 uriBuilder -> uriBuilder.path("/v2/local/search/keyword.json")
@@ -168,13 +172,15 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
                         .queryParam("sort", "distance")
                         .build())
                 .map(documents -> {
-                    List<String> places = new ArrayList<>();
+                    List<NearbyPlace> places = new ArrayList<>();
                     for (JsonNode document : documents) {
                         String name = blankToNull(document.path("place_name").asText(null));
-                        if (name == null) {
+                        Double placeLatitude = finiteOrNull(document.path("y").asText(null));
+                        Double placeLongitude = finiteOrNull(document.path("x").asText(null));
+                        if (name == null || placeLatitude == null || placeLongitude == null) {
                             continue;
                         }
-                        places.add(name);
+                        places.add(new NearbyPlace(name, placeLatitude, placeLongitude));
                         if (places.size() == PLACES_MAX_COUNT) {
                             break;
                         }
@@ -368,22 +374,38 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
                         failure.clientMayRetryLater(), attempts.get(), failure.getMessage()));
     }
 
-    /** 건물명은 좌표 위치 그 자체라 places 맨 앞에 둔다. */
-    private static List<String> mergeBuildingName(String buildingName, List<String> places) {
+    /**
+     * 건물명은 좌표 위치 그 자체라 관측 좌표를 붙여 places 맨 앞에 둔다. 같은 이름이 keyword 결과에 이미 있으면
+     * 실제 장소 좌표를 가진 keyword 항목을 유지한다.
+     */
+    private static List<NearbyPlace> mergeBuildingName(String buildingName, double latitude, double longitude,
+            List<NearbyPlace> places) {
         if (buildingName == null) {
             return places;
         }
-        if (places.contains(buildingName)) {
+        if (places.stream().anyMatch(place -> place.name().equals(buildingName))) {
             return places;
         }
-        List<String> merged = new ArrayList<>();
-        merged.add(buildingName);
+        List<NearbyPlace> merged = new ArrayList<>();
+        merged.add(new NearbyPlace(buildingName, latitude, longitude));
         merged.addAll(places);
         return merged.stream().limit(PLACES_MAX_COUNT).toList();
     }
 
     private static String blankToNull(String value) {
         return (value == null || value.isBlank()) ? null : value;
+    }
+
+    private static Double finiteOrNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            double parsed = Double.parseDouble(value);
+            return Double.isFinite(parsed) ? parsed : null;
+        } catch (NumberFormatException exception) {
+            return null;
+        }
     }
 
     private record KakaoAddress(String address, String buildingName) {

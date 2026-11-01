@@ -41,7 +41,7 @@ class GeocodingServiceTest {
     private static final Coordinate C2 = new Coordinate(37.4979, 127.0276);
     private static final Coordinate C3 = new Coordinate(37.5445, 127.0557);
 
-    private static final GeoPlace P1 = new GeoPlace("주소1", List.of("장소1"));
+    private static final GeoPlace P1 = new GeoPlace("주소1", List.of(new NearbyPlace("장소1", 37.5, 127.0)));
     private static final GeoPlace P2 = new GeoPlace("주소2", List.of());
     private static final GeoPlace P3 = new GeoPlace(null, List.of());
 

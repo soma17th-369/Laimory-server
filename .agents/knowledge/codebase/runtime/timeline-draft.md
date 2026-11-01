@@ -59,7 +59,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    **PHOTO 좌표는 조회·상한·실패율(D1)에는 합류하지만 시간순 연속 실패(D2) 축에는 관측을 만들지 않는다** —
    사진은 시간축에 조밀하게 뭉쳐, 같은 자리에서 찍은 사진 3장이 공유하는 좌표가 한 번 실패하는 것만으로
    하루 draft 전체가 502가 되기 때문이다(임계값 3은 하루 25개 안팎이 흩어진 STAY/MOVEMENT 기준이다).
-   성공한 PHOTO 좌표의 주소·주변 장소는 payload의 `address`/`places`로 저장된다.
+   성공한 PHOTO 좌표의 주소·주변 장소는 payload의 `address`/`places`로 저장된다. `places` 원소는
+   `{name, latitude, longitude}` 객체다(#620).
 6. **DailyRecord 선생성 + source 저장 + 크레딧 차감을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(subjectId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장, 조건부 차감(`remaining >= 비용`) + 사용 기록

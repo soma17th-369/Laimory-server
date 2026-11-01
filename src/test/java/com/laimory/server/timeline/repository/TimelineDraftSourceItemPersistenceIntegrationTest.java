@@ -5,6 +5,7 @@ import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists
 import static com.laimory.server.testsupport.TestSubjects.id;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laimory.server.geo.NearbyPlace;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.CalendarPayload;
@@ -63,7 +64,7 @@ class TimelineDraftSourceItemPersistenceIntegrationTest {
         String taskId = "11111111-1111-1111-1111-111111111111";
         MovementPayload movement = new MovementPayload(
                 new MovementEndpoint(37.4979, 127.0276, null, null),
-                new MovementEndpoint(37.5445, 127.0557, "서울 성동구 뚝섬로 지하 342", List.of("성수역 2호선")),
+                new MovementEndpoint(37.5445, 127.0557, "서울 성동구 뚝섬로 지하 342", List.of(new NearbyPlace("성수역 2호선", 37.5446, 127.0560))),
                 "IN_VEHICLE", 5200.0);
 
         TimelineDraftSourceItem toSave = TimelineDraftSourceItem.of(
