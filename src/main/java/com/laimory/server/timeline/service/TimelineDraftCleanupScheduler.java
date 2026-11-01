@@ -1,10 +1,8 @@
 package com.laimory.server.timeline.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
-import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.photo.PhotoObjectKeys;
 import com.laimory.server.timeline.photo.S3PhotoStorageService;
 import com.laimory.server.timeline.photo.S3PhotoStorageService.BatchDeleteResult;
@@ -31,7 +29,6 @@ public class TimelineDraftCleanupScheduler {
 
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
     private final S3PhotoStorageService s3PhotoStorageService;
-    private final ObjectMapper objectMapper;
     private final Clock clock;
     private final TimelineDraftCleanupWorkerProperties properties;
     private final TaskExecutor workerExecutor;
@@ -40,13 +37,11 @@ public class TimelineDraftCleanupScheduler {
     public TimelineDraftCleanupScheduler(
             TimelineDraftSourceItemService timelineDraftSourceItemService,
             S3PhotoStorageService s3PhotoStorageService,
-            ObjectMapper objectMapper,
             Clock clock,
             TimelineDraftCleanupWorkerProperties properties,
             @Qualifier("timelineDraftCleanupWorkerExecutor") TaskExecutor workerExecutor) {
         this.timelineDraftSourceItemService = timelineDraftSourceItemService;
         this.s3PhotoStorageService = s3PhotoStorageService;
-        this.objectMapper = objectMapper;
         this.clock = clock;
         this.properties = properties;
         this.workerExecutor = workerExecutor;
@@ -199,22 +194,20 @@ public class TimelineDraftCleanupScheduler {
         return result;
     }
 
-    /** payload가 깨졌거나 filename이 없으면 기존 정책대로 S3 orphan을 수용하고 {@code null}을 반환한다. */
-    private String photoObjectKeyOrNull(TimelineDraftSourceItem row) {
-        PhotoPayload photo;
-        try {
-            photo = objectMapper.treeToValue(row.getPayload(), PhotoPayload.class);
-        } catch (JsonProcessingException | RuntimeException exception) {
-            log.warn("PHOTO payload 파싱 실패, S3 삭제 건너뜀: id={}",
-                    row.getTimelineDraftSourceItemId());
-            return null;
-        }
-        if (photo == null || photo.filename() == null || photo.filename().isBlank()) {
+    /**
+     * payload가 깨졌거나 filename이 없으면 기존 정책대로 S3 orphan을 수용하고 {@code null}을 반환한다.
+     *
+     * <p>{@code PhotoPayload}로 통째로 읽지 않고 {@code filename}만 꺼낸다 — 저장본 {@code places}는 문자열 원소(옛 행)와
+     * 객체 원소가 섞여 있어 한 타입으로 읽으면 한쪽 행에서 파싱이 실패한다(#620).
+     */
+    private static String photoObjectKeyOrNull(TimelineDraftSourceItem row) {
+        JsonNode filename = row.getPayload() == null ? null : row.getPayload().get("filename");
+        if (filename == null || !filename.isTextual() || filename.asText().isBlank()) {
             log.warn("PHOTO payload filename 없음, S3 삭제 건너뜀: id={}",
                     row.getTimelineDraftSourceItemId());
             return null;
         }
-        return PhotoObjectKeys.subjectFullKey(photo.filename(), row.getSubjectId());
+        return PhotoObjectKeys.subjectFullKey(filename.asText(), row.getSubjectId());
     }
 
     private static long elapsedMillis(long startedAtNanos) {

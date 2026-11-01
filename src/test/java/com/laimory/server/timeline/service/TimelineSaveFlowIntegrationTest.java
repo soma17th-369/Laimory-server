@@ -115,7 +115,7 @@ class TimelineSaveFlowIntegrationTest {
         recordId = dailyRecordRepository.save(DailyRecord.createDraft(subjectId, DATE, DATE.atTime(12, 0), ZONE))
                 .getDailyRecordId();
         eventId = timelineEventRepository.save(TimelineEvent.of(recordId, TimelineEventType.MEAL,
-                        DATE.atTime(12, 10), DATE.atTime(13, 0), "점심", "회사 근처", "점심은 어땠나요?", null, null))
+                        DATE.atTime(12, 10), DATE.atTime(13, 0), "점심", "회사 근처", "점심은 어땠나요?", null, null, null, null))
                 .getTimelineEventId();
     }
 
@@ -160,7 +160,7 @@ class TimelineSaveFlowIntegrationTest {
 
         timelineEventEditService.updateMemo("v1", subjectId, eventId, "수정");
         timelineEventEditService.updateEvent("v1", subjectId, eventId,
-                new UpdateTimelineEventRequest("제목", null, DATE.atTime(9, 0), null, null, null, List.of()));
+                new UpdateTimelineEventRequest("제목", null, DATE.atTime(9, 0), null, null, null, List.of(), null, null));
         TimelineEvent edited = timelineEventRepository.findById(eventId).orElseThrow();
         assertThat(edited.getTitle()).isEqualTo("제목");
         assertThat(edited.getMemo()).isEqualTo("수정");

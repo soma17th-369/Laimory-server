@@ -96,6 +96,10 @@ class FakeTimelineAiDispatcherTest {
                 .andExpect(header("Task-Token", RESULT_TOKEN))
                 .andExpect(jsonPath("$.events.length()").value(1))
                 .andExpect(jsonPath("$.events[0].eventType").value("UNKNOWN"))
+                // 장소 후보 UI를 dev에서 태워 보도록 {place} subtitle과 우선순위 순서의 후보를 싣는다(#612).
+                .andExpect(jsonPath("$.events[0].subtitle").value("[FAKE] {place}에서 보낸 시간"))
+                .andExpect(jsonPath("$.events[0].placeCandidates[0].name").value("[FAKE] 장소"))
+                .andExpect(jsonPath("$.events[0].placeCandidates[1].name").value("[FAKE] 장소 후보 2"))
                 // fake는 조회한 시각을 그대로 되돌려 보낸다. Jackson 역직렬화가 offset을 UTC로 옮기므로
                 // 표기는 Z이지만 같은 순간이며, 서버가 record timezone wall-clock으로 정규화한다.
                 .andExpect(jsonPath("$.events[0].startAt").value("2026-06-17T00:00:00Z"))

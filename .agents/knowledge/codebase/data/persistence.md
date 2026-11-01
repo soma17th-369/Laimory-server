@@ -55,6 +55,7 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
 - `app_config`
 - `daily_records → timeline_events ⇄ timeline_items` (`timeline_event_items` junction N:M —
   Item은 record/event FK가 없는 독립 행이고 하루 범위는 junction→Event→DailyRecord로 해석)
+- `timeline_events → timeline_event_place_candidates` (#612 — Event 장소 후보, 후보 1개 = 1행)
 - `timeline_draft_source_items` (API→AI 입력 staging, `(task_id, raw_id)` UNIQUE — payload는
   v1 privacy 치환 저장본이고 `clientPhotoUri`만 원문 유지, retention 기준은 `created_at`)
 - `users`, `refresh_tokens`, `account_erasure_jobs` (#305 — 탈퇴가 접수한 userId-only PENDING 삭제 작업).
@@ -82,7 +83,8 @@ JDBC URL의 `serverTimezone=Asia/Seoul` 아래에서 `java.sql.Timestamp`를 거
   `created_at`·`updated_at`. subject FK `RESTRICT`·subject index. 범용 원장(지급·조정)이 아니다. 쓰기는 native INSERT와
   JPQL 전이 UPDATE라 감사 컬럼을 앱 Seoul 벽시계로 직접 채운다. 정리 작업은 없고 탈퇴 삭제가 함께 지운다.
   유실 수동 조회는 `status = 'CHARGED' AND created_at < now - (3m + 수 분)`. 1시간 기준 같은 조건의 건수를
-  `laimory.credit.history.charged.stale` gauge가 5분마다 다시 세어 경보한다(#582). V10에서 추가)
+  `laimory.credit.history.charged.stale` gauge가 5분마다 다시 세어 경보한다(#582). 결말 난 최근 5건의 AI 실패 수는
+  `laimory.credit.history.recent.ai.failed` gauge가 PK 역순 조회로 센다(#617). V10에서 추가)
 - `credit_costs` (#558 — 크레딧 소비 기능 종류별 비용. PK `type`은 `CreditCostType` literal(`ascii_bin` — `term_type`
   선례), `cost INT NOT NULL`, `CHECK (cost >= 0)`(0 = 무료). 앱 쓰기 경로는 없고 행 추가·값 변경은 Flyway
   migration만 한다(직접 운영 SQL 금지). 앱은 캐시 없이 매 요청 PK 조회한다. V8에서 추가하며 `TIMELINE_CREATION` = 1 seed)
@@ -309,8 +311,25 @@ NULL). 감정 수정은 비트랜잭션 사전 조회 → 조건부 UPDATE 우�
 `timeline_events.question`은 `VARCHAR(255) NULL`이다(#252). AI 결과 저장 transaction만 쓰는 컬럼이라
 편집 API 경로는 값을 건드리지 않으며, 기존 행은 backfill하지 않고 NULL로 남는다. entity는 length 지정
 없는 `String`(Hibernate 기본 255)이다. `place`·`address`(#330)도 같은 계약의 `VARCHAR(255) NULL`이다 —
-AI 결과 저장 transaction만 쓰고, 조회 조건이 아닌 표시 데이터라 index를 두지 않는다. 세 컬럼 모두 V1에
-포함되어 있으며, 이후 구조 변경은 후속 migration으로 JPA 검증 전에 반영한다.
+조회 조건이 아닌 표시 데이터라 index를 두지 않는다. 세 컬럼 모두 V1에 포함되어 있으며, 이후 구조 변경은
+후속 migration으로 JPA 검증 전에 반영한다. `address`는 AI 결과 저장 transaction만 쓰고, `place`는 AI 결과 저장이
+초기값을 쓰거나 수동 생성이 선택 입력으로 쓴 뒤(#616) 장소 지정 PUT(#612)이 dirty-checking으로 교체한다
+(`TimelineEvent`는 `@DynamicUpdate`).
+
+`timeline_events.latitude`·`longitude`(V14, #612)는 `DOUBLE NULL` 2컬럼이다(POINT 아님 — 공간 검색이 없고
+nullable이라 SPATIAL INDEX를 걸 수 없다). AI 결과 저장이 초기값을 쓰고, 수동 생성·Event PATCH·장소 지정 PUT이
+사용자가 보낸 좌표 쌍으로 쓴다(#616). 항상 함께 NULL이거나 함께 값이다(앱 검증). 기존 행은 NULL이다. 좌표는
+PATCH와 장소 지정 PUT이 함께 쓰는 필드 그룹이라, 두 요청이 같은 Event에 겹치고 한쪽의 위도나 경도 하나가 기존
+값과 같으면 `@DynamicUpdate`가 그 컬럼을 SET에서 빼 두 요청의 값이 섞일 수 있다 — 막지 않는다.
+
+`timeline_event_place_candidates`(V14, #612)는 `(timeline_event_place_candidate_id PK, timeline_event_id, name
+VARCHAR(255) NOT NULL, latitude DOUBLE NULL, longitude DOUBLE NULL, BaseEntity 감사 컬럼)`이다. 좌표 2컬럼(V15, #620)은
+그 후보 장소의 위치이며 항상 함께 NULL이거나 함께 값이다(결과 저장 검증). V15 이전 후보 행은 NULL이다. `timeline_event_id`는 `timeline_events` FK `ON DELETE CASCADE`
+이고 `idx_timeline_event_place_candidates_event`가 FK·묶음 조회(IN)를 받친다. 우선순위 전용 컬럼은 없다 —
+AI 결과 저장 transaction이 받은 순서대로 INSERT하고 조회는 `ORDER BY id`다. 1번 후보에 좌표가 있으면 같은
+transaction이 그 좌표를 `timeline_events` 좌표 초기값으로 쓴다(#620). writer는 AI 결과 저장(INSERT)과
+Event·DailyRecord soft delete transaction(hard DELETE)뿐이고, 장소 지정은 후보를 건드리지 않는다. 계정 삭제는
+`daily_records` → `timeline_events` → 후보 FK CASCADE로 지운다.
 
 `timeline_events.event_type`은 `VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'`이다(#166). default는 기존 행
 backfill과 컬럼을 생략하는 writer의 INSERT 호환용이다. entity는 `@Enumerated(STRING)`
@@ -501,6 +520,9 @@ Event PATCH와 Event 생성 POST의 수동 PHOTO는 client가 업로드 완료 �
 draft cleanup은 PK MOD 담당에서 보관기간이 지난 source row를 slot당 최대 250개 한 번 일반 조회하고
 PHOTO full key를 `DeleteObjects` batch로 지운 뒤 성공 PHOTO와 S3가 필요 없는 non-PHOTO를 DB bulk
 delete한다. PHOTO payload/filename이 깨졌으면 기존 정책대로 S3 orphan을 허용하고 source row는 지운다.
+draft cleanup과 orphan 스위퍼는 저장된 PHOTO payload를 `PhotoPayload`로 통째로 읽지 않고 `filename`·`photoUrl`
+필드만 JSON 그대로 읽는다(#620) — 주변 장소 목록 `places`의 원소 형태가 행마다 다를 수 있어 한 타입으로 읽으면
+일부 행에서 파싱이 실패해 S3 삭제를 건너뛴다. 저장본 payload를 새로 읽는 코드도 이 규칙을 따른다.
 명시적 S3 실패·응답 누락·SDK 예외 PHOTO row는 다음 일일 실행까지 남는다.
 Event-Item 연결 해제는 junction만 hard delete하고 즉시 성공한다(Event/DailyRecord 삭제는 soft delete, #568).
 어느 삭제 API도 Item을 분류하거나 job을 만들지 않는다 — 연결을 잃은 Item과 그 S3 사진은 orphan 스위퍼가
@@ -549,9 +571,9 @@ S3 삭제가 멱등이라 모두 `Deleted`로 수렴해 지워진다(#551).
   dedupe를 통과한 뒤 DB duplicate-key 500이 나거나 final 제외 결과가 어긋난다).
 - `item_type`과 `raw_id`는 JSON payload 밖의 권위 column이다.
 - staging·final payload의 텍스트 값, AI 결과가 저장한 `timeline_events`의
-  `title`/`subtitle`/`question`/`place`/`address`, `user_memories.memory`는 v1 privacy 치환 후의 값이다
-  (`clientPhotoUri`만 storage 원문 유지 — AI 전달에서만 치환). 사용자 편집(Event PATCH/memo PUT)의
-  title·subtitle·memo는 원문 저장이다.
+  `title`/`subtitle`/`question`/`place`/`address`와 장소 후보 `name`, `user_memories.memory`는 v1 privacy 치환
+  후의 값이다(`clientPhotoUri`만 storage 원문 유지 — AI 전달에서만 치환). 사용자 편집(Event PATCH/memo PUT/
+  place PUT·수동 Event 생성)의 title·subtitle·memo·place는 원문 저장이다.
 - application Redis 접근은 `RedisGateway`를 우회하지 않는다(승인 예외: `CacheConfig`의 Spring Cache
   Redis manager와 그 캐시 구현 `SingleFlightRedisCacheManager` — 같은 key prefix를 붙인다).
 - staging retention은 PROCESSING TTL보다 충분히 길어야 한다.

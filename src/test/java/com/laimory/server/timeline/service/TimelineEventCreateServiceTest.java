@@ -49,7 +49,7 @@ import org.springframework.test.util.ReflectionTestUtils;
  * 수동 Event 생성 use case 단위 검증.
  *
  * <p>고정하는 계약: DRAFT/SAVED 모두 생성 허용, 없음·타인 record는 404 은닉(사진 검증보다 먼저),
- * PATCH와 같은 상세·사진 입력 규칙, question/place/address는 항상 null, 사진 없으면 resolve/link
+ * PATCH와 같은 상세·사진 입력 규칙, question/address는 항상 null(place·좌표는 선택 입력), 사진 없으면 resolve/link
  * 미호출·items 빈 목록, 있으면 생성 ID target으로 resolve→link 순 호출 후 응답 items를 조회 경로와
  * 같은 정렬로 조립, save 1회, User Memory 무의존.
  */
@@ -99,6 +99,8 @@ class TimelineEventCreateServiceTest {
         assertThat(saved.getQuestion()).isNull();
         assertThat(saved.getPlace()).isNull();
         assertThat(saved.getAddress()).isNull();
+        assertThat(saved.getLatitude()).isNull();
+        assertThat(saved.getLongitude()).isNull();
         assertThat(saved.getMemo()).isNull();
 
         assertThat(response.timelineEventId()).isEqualTo(EVENT_ID);
@@ -106,6 +108,67 @@ class TimelineEventCreateServiceTest {
         assertThat(response.place()).isNull();
         assertThat(response.address()).isNull();
         assertThat(response.items()).isEmpty();
+    }
+
+    @Test
+    void createEventStoresStrippedPlaceAndCoordinates() {
+        stubOwnedRecord(DailyRecordStatus.DRAFT);
+        stubSaveAssignsId();
+        stubNoPhotos();
+
+        TimelineEventResponse response = service.createEvent(VERSION, SUBJECT_ID, RECORD_DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "휴식", null, START, null, null, List.of(),
+                        "  △△공원  ", 37.5445, 127.0559));
+
+        ArgumentCaptor<TimelineEvent> eventCaptor = ArgumentCaptor.forClass(TimelineEvent.class);
+        verify(timelineEventService).save(eventCaptor.capture());
+        TimelineEvent saved = eventCaptor.getValue();
+        assertThat(saved.getPlace()).isEqualTo("△△공원");
+        assertThat(saved.getLatitude()).isEqualTo(37.5445);
+        assertThat(saved.getLongitude()).isEqualTo(127.0559);
+        assertThat(saved.getQuestion()).isNull();
+        assertThat(saved.getAddress()).isNull();
+        assertThat(response.place()).isEqualTo("△△공원");
+        assertThat(response.latitude()).isEqualTo(37.5445);
+        assertThat(response.longitude()).isEqualTo(127.0559);
+    }
+
+    @Test
+    void createEventStoresBlankPlaceAsNull() {
+        stubOwnedRecord(DailyRecordStatus.DRAFT);
+        stubSaveAssignsId();
+        stubNoPhotos();
+
+        service.createEvent(VERSION, SUBJECT_ID, RECORD_DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "휴식", null, START, null, null, List.of(),
+                        "   ", null, null));
+
+        ArgumentCaptor<TimelineEvent> eventCaptor = ArgumentCaptor.forClass(TimelineEvent.class);
+        verify(timelineEventService).save(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getPlace()).isNull();
+    }
+
+    @ParameterizedTest(name = "lat={0}, lng={1}")
+    @MethodSource("boundaryCoordinates")
+    void createEventAcceptsBoundaryCoordinates(Double latitude, Double longitude) {
+        stubOwnedRecord(DailyRecordStatus.DRAFT);
+        stubSaveAssignsId();
+        stubNoPhotos();
+
+        service.createEvent(VERSION, SUBJECT_ID, RECORD_DATE,
+                new CreateTimelineEventRequest(TimelineEventType.REST, "휴식", null, START, null, null, List.of(),
+                        null, latitude, longitude));
+
+        ArgumentCaptor<TimelineEvent> eventCaptor = ArgumentCaptor.forClass(TimelineEvent.class);
+        verify(timelineEventService).save(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getLatitude()).isEqualTo(latitude);
+        assertThat(eventCaptor.getValue().getLongitude()).isEqualTo(longitude);
+    }
+
+    private static Stream<Arguments> boundaryCoordinates() {
+        return Stream.of(
+                Arguments.of(90.0, 180.0),
+                Arguments.of(-90.0, -180.0));
     }
 
     @Test
@@ -188,7 +251,19 @@ class TimelineEventCreateServiceTest {
                 Arguments.of("endAt before startAt", request(
                         TimelineEventType.REST, "제목", null, START, START.minusNanos(1), null)),
                 Arguments.of("memo over 500", request(
-                        TimelineEventType.REST, "제목", null, START, null, "m".repeat(501))));
+                        TimelineEventType.REST, "제목", null, START, null, "m".repeat(501))),
+                Arguments.of("place over 255", new CreateTimelineEventRequest(
+                        TimelineEventType.REST, "제목", null, START, null, null, List.of(), "p".repeat(256), null, null)),
+                Arguments.of("latitude only", new CreateTimelineEventRequest(
+                        TimelineEventType.REST, "제목", null, START, null, null, List.of(), null, 37.5445, null)),
+                Arguments.of("longitude only", new CreateTimelineEventRequest(
+                        TimelineEventType.REST, "제목", null, START, null, null, List.of(), null, null, 127.0559)),
+                Arguments.of("latitude over 90", new CreateTimelineEventRequest(
+                        TimelineEventType.REST, "제목", null, START, null, null, List.of(), null, 90.0001, 127.0559)),
+                Arguments.of("longitude under -180", new CreateTimelineEventRequest(
+                        TimelineEventType.REST, "제목", null, START, null, null, List.of(), null, 37.5445, -180.0001)),
+                Arguments.of("latitude NaN", new CreateTimelineEventRequest(
+                        TimelineEventType.REST, "제목", null, START, null, null, List.of(), null, Double.NaN, 127.0559)));
     }
 
     // --- photosToAdd (#361) ---
@@ -316,6 +391,6 @@ class TimelineEventCreateServiceTest {
             TimelineEventType eventType, String title, String subtitle,
             LocalDateTime startAt, LocalDateTime endAt, String memo,
             List<UpdateTimelineEventPhotoRequest> photosToAdd) {
-        return new CreateTimelineEventRequest(eventType, title, subtitle, startAt, endAt, memo, photosToAdd);
+        return new CreateTimelineEventRequest(eventType, title, subtitle, startAt, endAt, memo, photosToAdd, null, null, null);
     }
 }

@@ -6,11 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.credit.CreditCostType;
+import com.laimory.server.credit.CreditHistoryStatus;
 import com.laimory.server.credit.CreditRefundReason;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.testsupport.SubjectMappingFixtures;
 import com.laimory.server.testsupport.TestSubjects;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,13 +24,15 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessException;
+import org.springframework.data.domain.Limit;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
  * subject_credits·credit_histories 실 MySQL 왕복 검증(#548·#565) — 조건부 차감이 잔액을 넘지 않는 것, 사용 기록의
  * 소비·환불 전이와 환불이 한 번만 일어나는 것, 가입 재실행이 잔액을 되돌리지 않는 것, 음수 CHECK와 삭제를 실제
- * 제약 위에서 확인한다. credit_costs(#558)는 migration seed가 모든 비용 종류를
+ * 제약 위에서 확인한다. 최근 AI 실패 경보(#617)의 결말 난 기록 창 조회도 실제 정렬·LIMIT로 확인한다.
+ * credit_costs(#558)는 migration seed가 모든 비용 종류를
  * 덮는지 확인한다. {@code ddl-auto=validate}라 컨텍스트 기동 자체가
  * 엔티티↔DDL 정합을 검증한다.
  *
@@ -47,6 +51,9 @@ class CreditPersistenceIntegrationTest {
 
     @Autowired
     private SubjectCreditRepository subjectCreditRepository;
+
+    @Autowired
+    private CreditHistoryRepository creditHistoryRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -240,6 +247,35 @@ class CreditPersistenceIntegrationTest {
                 "UPDATE subject_credits SET remaining = -1 WHERE subject_id = ?", SUBJECT_ID.toString()))
                 .isInstanceOf(DataAccessException.class)
                 .hasMessageContaining("chk_subject_credits_remaining_non_negative");
+    }
+
+    /** 차감순(id 증가)으로 결말 상태를 직접 넣는다 — 창 조회는 공유 DB 전체에서 최신 행부터 보므로 이 행들이 가장 최신이다. */
+    private void givenHistories(String... statusAndReasons) {
+        for (int i = 0; i < statusAndReasons.length; i++) {
+            String[] parts = statusAndReasons[i].split(":");
+            jdbcTemplate.update("INSERT INTO credit_histories (subject_id, cost_type, reference_id, amount, status, "
+                            + "refund_reason, created_at, updated_at) "
+                            + "VALUES (?, 'TIMELINE_CREATION', ?, 1, ?, ?, NOW(6), NOW(6))",
+                    SUBJECT_ID.toString(), "00000000-0000-7000-8000-0000009481%02d".formatted(i),
+                    parts[0], parts.length > 1 ? parts[1] : null);
+        }
+    }
+
+    @Test
+    void settledStatusesSkipInProgressAndOtherRefundReasonsAndKeepLatestOnly() {
+        givenHistories("CONSUMED", "CONSUMED", "REFUNDED:AI_FAILED", "REFUNDED:TASK_SAVE_FAILED", "CONSUMED",
+                "REFUNDED:TIMEOUT", "REFUNDED:DISPATCH_REJECTED", "CHARGED");
+
+        List<CreditHistoryStatus> statuses = creditHistoryRepository.findSettledStatuses(
+                CreditCostType.TIMELINE_CREATION, CreditHistoryStatus.CONSUMED, CreditHistoryStatus.REFUNDED,
+                EnumSet.of(CreditRefundReason.AI_FAILED, CreditRefundReason.TIMEOUT,
+                        CreditRefundReason.DISPATCH_REJECTED),
+                Limit.of(5));
+
+        // 최신순: DISPATCH_REJECTED, TIMEOUT, CONSUMED, (TASK_SAVE_FAILED 건너뜀) AI_FAILED, CONSUMED — 가장 오래된
+        // CONSUMED와 CHARGED는 빠진다.
+        assertThat(statuses).containsExactly(CreditHistoryStatus.REFUNDED, CreditHistoryStatus.REFUNDED,
+                CreditHistoryStatus.CONSUMED, CreditHistoryStatus.REFUNDED, CreditHistoryStatus.CONSUMED);
     }
 
     @Test

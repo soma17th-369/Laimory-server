@@ -22,7 +22,8 @@ class UpdateTimelineEventRequestSchemaTest {
 
         assertThat(request.getRequired()).isNullOrEmpty();
         assertThat(request.getProperties().keySet()).containsExactlyInAnyOrder(
-                "title", "subtitle", "startAt", "endAt", "eventType", "memo", "photosToAdd");
+                "title", "subtitle", "startAt", "endAt", "eventType", "memo", "photosToAdd",
+                "latitude", "longitude");
     }
 
     @Test

@@ -49,6 +49,8 @@ class TimelineDeletionTransactionServiceTest {
     @Mock
     private TimelineEventItemService timelineEventItemService;
     @Mock
+    private TimelineEventPlaceCandidateService timelineEventPlaceCandidateService;
+    @Mock
     private TimelineItemService timelineItemService;
     @Mock
     private DailyRecordService dailyRecordService;
@@ -69,6 +71,7 @@ class TimelineDeletionTransactionServiceTest {
         service = new TimelineDeletionTransactionService(
                 timelineEventService,
                 timelineEventItemService,
+                timelineEventPlaceCandidateService,
                 timelineItemService,
                 dailyRecordService,
                 Clock.fixed(Instant.parse("2026-10-12T03:00:00Z"), ZoneId.of("Asia/Seoul")));
@@ -81,7 +84,7 @@ class TimelineDeletionTransactionServiceTest {
                 RECORD_DATE.atTime(9, 0),
                 null,
                 "제목",
-                null, null, null, null);
+                null, null, null, null, null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", eventId);
         return event;
     }

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineItem;
 import com.laimory.server.timeline.payload.NotificationPayload;
@@ -42,7 +43,7 @@ class TimelineOrphanItemSweepServiceTest {
     @BeforeEach
     void setUp() {
         service = new TimelineOrphanItemSweepService(timelineItemService, timelineEventItemService,
-                new ObjectMapper(), java.time.Clock.systemUTC());
+                java.time.Clock.systemUTC());
         lenient().when(timelineEventItemService.findActivelyLinkedItemIds(anyCollection()))
                 .thenReturn(Set.of());
     }
@@ -51,7 +52,7 @@ class TimelineOrphanItemSweepServiceTest {
     void observationAndStaleThresholdUseClockInSeoul() {
         var clock = java.time.Clock.fixed(java.time.Instant.parse("2026-09-11T18:30:00Z"), java.time.ZoneOffset.UTC);
         service = new TimelineOrphanItemSweepService(timelineItemService, timelineEventItemService,
-                new ObjectMapper(), clock);
+                clock);
         scan(notificationItem(11L));
         assertThat(service.observeBatch(1, 2, 250)).containsExactly(11L);
         verify(timelineItemService).markOrphanObserved(List.of(11L), LocalDateTime.of(2026, 9, 12, 3, 30));
@@ -90,6 +91,22 @@ class TimelineOrphanItemSweepServiceTest {
         // 행은 S3 삭제가 확인된 뒤에만 지운다(#551).
         assertThat(result.photoDeletions()).containsExactly(new PhotoDeletion(12L, KEY_A));
         verify(timelineItemService).deleteByIds(List.of());
+    }
+
+    @Test
+    void photoOrphanWithMixedPlaceShapesIsReturnedForS3Deletion() {
+        // 저장본 places는 문자열 원소(옛 행)와 객체 원소가 섞여 있다(#620). 두 형태 모두 S3 삭제 대상이 된다.
+        TimelineItem item = photoItem(18L, FILENAME, "https://cdn.example.net/" + KEY_A);
+        ((ObjectNode) item.getPayload()).putArray("places")
+                .add("옛 장소")
+                .add(new ObjectMapper().createObjectNode()
+                        .put("name", "새 장소").put("latitude", 37.5).put("longitude", 127.0));
+        scan(item);
+        claim(item);
+
+        var result = service.sweepBatch(service.observeBatch(0, 2, 250));
+
+        assertThat(result.photoDeletions()).containsExactly(new PhotoDeletion(18L, KEY_A));
     }
 
     @Test

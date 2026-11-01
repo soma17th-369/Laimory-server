@@ -166,6 +166,72 @@ class TimelineAiTaskInputServiceTest {
     }
 
     @Test
+    void v1InputReturnsNearbyPlacesAsNamesWithoutMutatingStoredPayload() {
+        // 저장본 places 원소는 객체(#620)이거나 옛 행의 이름 문자열이다. v1 AI는 문자열만 받으므로 이름만 낸다.
+        List<TimelineDraftSourceItem> sources = placeSources();
+        givenInputPendingTaskWithSources(sources);
+
+        AiTimelineTaskInputResponse response = service.getInput("v1", TASK_ID, TASK_TOKEN);
+
+        List<JsonNode> payloads = response.sourceItems().stream()
+                .map(AiTimelineTaskInputResponse.SourceItem::payload).toList();
+        assertThat(payloads.get(0).get("places").toString()).isEqualTo("[\"모수 성수\",\"옛 장소\"]");
+        assertThat(payloads.get(1).get("places").toString()).isEqualTo("[\"성수역\"]");
+        assertThat(payloads.get(1).get("clientPhotoUri").textValue()).isEqualTo(RedactionType.DEVICE_URI.token());
+        assertThat(payloads.get(2).get("start").get("places").toString()).isEqualTo("[\"강남역\"]");
+        assertThat(payloads.get(2).get("end").get("places").toString()).isEqualTo("[\"선릉역\"]");
+        // 저장 payload 원본은 미변형(deep copy 뒤 변환).
+        assertThat(sources.get(0).getPayload().get("places").get(0).get("name").textValue()).isEqualTo("모수 성수");
+    }
+
+    @Test
+    void v2InputReturnsStoredNearbyPlacesAsIs() {
+        givenInputPendingTaskWithSources(placeSources());
+
+        AiTimelineTaskInputResponse response = service.getInput("v2", TASK_ID, TASK_TOKEN);
+
+        List<JsonNode> payloads = response.sourceItems().stream()
+                .map(AiTimelineTaskInputResponse.SourceItem::payload).toList();
+        assertThat(payloads.get(0).get("places").toString()).isEqualTo(
+                "[{\"name\":\"모수 성수\",\"latitude\":37.5447,\"longitude\":127.0561},\"옛 장소\"]");
+        assertThat(payloads.get(2).get("start").get("places").toString()).isEqualTo(
+                "[{\"name\":\"강남역\",\"latitude\":37.4979,\"longitude\":127.0276}]");
+    }
+
+    private void givenInputPendingTaskWithSources(List<TimelineDraftSourceItem> sources) {
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.INPUT_PENDING)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(
+                DailyRecord.createDraft(SUBJECT_ID, DATE, DATE.atTime(22, 0), ZONE)));
+        when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(sources);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+    }
+
+    /** STAY(객체·옛 문자열 혼재), PHOTO(객체 + clientPhotoUri), MOVEMENT(start·end 객체) 순서. */
+    private static List<TimelineDraftSourceItem> placeSources() {
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode stay = mapper.createObjectNode().put("latitude", 37.5446).put("longitude", 127.0559);
+        stay.putArray("places").add(place(mapper, "모수 성수", 37.5447, 127.0561)).add("옛 장소");
+        ObjectNode photo = mapper.createObjectNode()
+                .put("filename", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg")
+                .put("clientPhotoUri", "content://media/external/images/42");
+        photo.putArray("places").add(place(mapper, "성수역", 37.5446, 127.0557));
+        ObjectNode movement = mapper.createObjectNode();
+        movement.putObject("start").putArray("places").add(place(mapper, "강남역", 37.4979, 127.0276));
+        movement.putObject("end").putArray("places").add(place(mapper, "선릉역", 37.5045, 127.0490));
+        return List.of(
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.STAY, "raw-1",
+                        DATE.atTime(9, 0), DATE.atTime(10, 0), stay),
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.PHOTO, "raw-2",
+                        DATE.atTime(10, 30), null, photo),
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.MOVEMENT, "raw-3",
+                        DATE.atTime(11, 0), DATE.atTime(11, 30), movement));
+    }
+
+    private static ObjectNode place(ObjectMapper mapper, String name, double latitude, double longitude) {
+        return mapper.createObjectNode().put("name", name).put("latitude", latitude).put("longitude", longitude);
+    }
+
+    @Test
     void getInput_afterInputConsumed_rejectedBeforePersonalData() {
         when(timelineTaskService.find(TASK_ID))
                 .thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));

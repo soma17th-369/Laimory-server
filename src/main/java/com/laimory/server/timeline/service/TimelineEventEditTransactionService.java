@@ -46,6 +46,9 @@ public class TimelineEventEditTransactionService {
         if (command.memoChanged()) {
             event.updateMemo(command.memo());
         }
+        if (command.latitude() != null) {
+            event.updateCoordinates(command.latitude(), command.longitude());
+        }
 
         timelineEventPhotoAddService.link(subjectId, timelineEventId, photoChanges);
     }

@@ -167,7 +167,7 @@ class TimelineAiTestControllerTest {
 
     private static TimelineAiTestResponse aiResponse(boolean timedOut) {
         return new TimelineAiTestResponse(TASK_ID, timedOut, List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.MEAL, "점심", null, null, null, null,
+                TimelineEventType.MEAL, "점심", null, null, null, null, null, null, null,
                 OffsetDateTime.of(2026, 6, 20, 12, 0, 0, 0, KST),
                 OffsetDateTime.of(2026, 6, 20, 13, 0, 0, 0, KST),
                 List.of(RAW_ID))));

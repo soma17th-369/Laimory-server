@@ -252,6 +252,49 @@ class UserMemoryUpdateWorkerTest {
     }
 
     @Test
+    void dispatchFillsSubtitlePlacePlaceholderWithCurrentPlaceBeforeRedactionAndKeepsTemplateInDb() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+        TimelineEvent event = TimelineEvent.of(RECORD_ID, TimelineEventType.MEAL,
+                LocalDateTime.of(2026, 8, 5, 12, 10), null,
+                "점심 식사", "{place}에서 친구와 파스타", null, "성수동 카페 010-1111-2222", null, 37.5445, 127.0559);
+        when(timelineEventService.findByDailyRecordId(RECORD_ID)).thenReturn(List.of(event));
+
+        worker.dispatchPendingUpdates();
+
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        AiUserMemoryUpdateRequest.Event dispatched =
+                request.getValue().dailyTimelines().getFirst().events().getFirst();
+        assertThat(dispatched.subtitle())
+                .isEqualTo("성수동 카페 " + RedactionType.PHONE.token() + "에서 친구와 파스타");
+        assertThat(event.getSubtitle()).isEqualTo("{place}에서 친구와 파스타");
+    }
+
+    @Test
+    void dispatchKeepsSubtitlePlaceholderWhenEventHasNoPlace() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+        TimelineEvent event = TimelineEvent.of(RECORD_ID, TimelineEventType.MEAL,
+                LocalDateTime.of(2026, 8, 5, 12, 10), null,
+                "점심 식사", "{place}에서 친구와 파스타", null, null, null, null, null);
+        when(timelineEventService.findByDailyRecordId(RECORD_ID)).thenReturn(List.of(event));
+
+        worker.dispatchPendingUpdates();
+
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        assertThat(request.getValue().dailyTimelines().getFirst().events().getFirst().subtitle())
+                .isEqualTo("{place}에서 친구와 파스타");
+    }
+
+    @Test
     void redaction이_실패하면_task_저장과_접수_없이_큐를_그대로_둔다() throws Exception {
         // redacted DTO는 task 저장 전에 완성된다 — 실패는 원문 fallback 없이 task 저장·dispatch를 막고
         // pending을 유지해 다음 배치가 다시 시도한다(기존 worker 실패 계약과 동일 수렴).
@@ -523,7 +566,7 @@ class UserMemoryUpdateWorkerTest {
     private static TimelineEvent event() {
         TimelineEvent event = TimelineEvent.of(RECORD_ID, TimelineEventType.MEAL,
                 LocalDateTime.of(2026, 8, 5, 12, 10), LocalDateTime.of(2026, 8, 5, 13, 0),
-                "점심", "회사 근처", "점심은 어땠나요?", null, null);
+                "점심", "회사 근처", "점심은 어땠나요?", null, null, null, null);
         event.updateMemo("응 좋았어");
         return event;
     }
@@ -532,7 +575,7 @@ class UserMemoryUpdateWorkerTest {
     private static TimelineEvent eventWithPii() {
         TimelineEvent event = TimelineEvent.of(RECORD_ID, TimelineEventType.MEAL,
                 LocalDateTime.of(2026, 8, 5, 12, 10), LocalDateTime.of(2026, 8, 5, 13, 0),
-                "전화 010-1234-5678", null, null, null, null);
+                "전화 010-1234-5678", null, null, null, null, null, null);
         event.updateMemo("메일 yun@example.com");
         return event;
     }

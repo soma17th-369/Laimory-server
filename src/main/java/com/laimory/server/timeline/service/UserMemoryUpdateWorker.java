@@ -273,15 +273,25 @@ public class UserMemoryUpdateWorker {
     /**
      * DB에는 사용자 수정 원문이 남고 AI 전달 DTO에서만 치환한다. bounded 상한은 각 컬럼 계약과 같다
      * (title/subtitle/question 255, memo 500). subtitle/question/memo는 nullable — null-safe 치환.
+     * subtitle의 {@code {place}}는 치환 전에 Event의 현재 {@code place}로 채워 완성 문장을 보낸다(#612 — DB는 템플릿
+     * 그대로). place가 null이면 채우지 않는다.
      */
     private AiUserMemoryUpdateRequest.Event toEvent(TimelineEvent event, ZoneId recordZone) {
         return new AiUserMemoryUpdateRequest.Event(
                 event.getEventType(),
                 privacyRedactor.redactText(event.getTitle(), EVENT_TEXT_MAX_LENGTH).text(),
-                privacyRedactor.redactText(event.getSubtitle(), EVENT_TEXT_MAX_LENGTH).text(),
+                privacyRedactor.redactText(fillPlace(event.getSubtitle(), event.getPlace()),
+                        EVENT_TEXT_MAX_LENGTH).text(),
                 privacyRedactor.redactText(event.getQuestion(), EVENT_TEXT_MAX_LENGTH).text(),
                 toOffset(event.getStartAt(), recordZone), toOffset(event.getEndAt(), recordZone),
                 privacyRedactor.redactText(event.getMemo(), MEMO_MAX_LENGTH).text());
+    }
+
+    private static String fillPlace(String subtitle, String place) {
+        if (subtitle == null || place == null) {
+            return subtitle;
+        }
+        return subtitle.replace(TimelineEvent.PLACE_PLACEHOLDER, place);
     }
 
     private static OffsetDateTime toOffset(LocalDateTime value, ZoneId recordZone) {

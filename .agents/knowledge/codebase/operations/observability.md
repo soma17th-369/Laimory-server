@@ -85,10 +85,11 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 담는 지정 23개 endpoint body는 **allowlist skeleton**으로
+  사용자 사생활 원문을 담는 지정 24개 endpoint body는 **allowlist skeleton**으로
   마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
-  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518, 앱 내 문의 조회 2개는 #529, 생성 가능 확인은 #594) — request 10개(draft 생성 POST, 생성 가능 확인 POST
-  `/a/api/v\d+/timeline/drafts/check` — payload를 받지 않지만 클라가 draft용 sourceItem을 그대로 보내면 원문이 실린다, Event PATCH, memo PUT, Event 수동 생성 POST
+  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518, 앱 내 문의 조회 2개는 #529, 생성 가능 확인은 #594, 장소 지정은 #612) — request 11개(draft 생성 POST, 생성 가능 확인 POST
+  `/a/api/v\d+/timeline/drafts/check` — payload를 받지 않지만 클라가 draft용 sourceItem을 그대로 보내면 원문이 실린다, Event PATCH, memo PUT,
+  장소 지정 PUT `/a/api/v\d+/timeline/events/[^/]+/place` — 사용자가 고르거나 직접 입력한 장소명, Event 수동 생성 POST
   `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
   User Memory result POST, dev 전용 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`, 문의 접수 POST
   `/a/api/v\d+/inquiries` — 답장 email과 문의 원문; presign 발급 `attachment-uploads`는 메타뿐이라 제외),
@@ -272,6 +273,10 @@ Spring JSON stdout
   - `laimory.inquiry.unanswered`: 처리됨(`answered_at`) 표시가 없는 문의 수(#603). 5분에 한 번 DB에서 다시 세고
     DB 오류는 NaN이다. 경보는 prod만, 매일 13:00~13:05 KST 시간창에서만 평가해 하루 한 번 알린다 — 창이 끝나며
     오는 resolved는 처리 완료를 뜻하지 않는다
+  - `laimory.credit.history.recent.ai.failed`: 결말 난 최근 타임라인 생성 5건(`CONSUMED` 또는 `AI_FAILED`·`TIMEOUT`·
+    `DISPATCH_REJECTED` 환불, 차감순) 중 AI 실패 수(#617). 진행 중과 `TASK_SAVE_FAILED`는 창에서 뺀다. 1분에 한 번
+    DB에서 다시 세고 DB 오류는 NaN이다. 경보는 prod만, 3 이상이면 firing하고 `notify_once` route라 firing 동안 반복
+    알림이 없다
   - `laimory.timeline.task.index.repair{index=global|user,operation=add|remove|expire,result=success|failed}`:
     최초 PROCESSING 등록·terminal 제거의 index 명령 실패 또는 사용자 index PEXPIRE=false를 task 재조회
     없이 같은 의도의 명령으로 한 번 재시도한 결과 수. 식별자와 Redis key는 tag에 넣지 않는다
@@ -413,6 +418,8 @@ staleness 분기를 중복 제거로 가리고, `metric == 0` 필터는 값 0이
 backup timer가 쓰는 textfile 시계열만 읽는 환경 고정 rule이다 — 백업 체계 자체의 계약은
 `deploy/monitoring/README.md`의 "prod MySQL backup"이 소유한다.
 notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
+`notify_once="true"` label rule은 `repeat_interval`이 매우 긴 전용 route를 타 firing 동안 재발송하지 않고,
+resolved 뒤 다시 firing하면 새로 알린다(#617).
 `notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
 대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
 일반 host memory는

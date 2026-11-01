@@ -25,14 +25,18 @@ import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.dto.DraftTaskStatusResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
+import com.laimory.server.timeline.dto.TimelineEventResponse;
 import com.laimory.server.timeline.dto.TimelineWindowDto;
+import com.laimory.server.timeline.dto.UpdateTimelineEventPlaceRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import com.laimory.server.timeline.entity.TimelineEvent;
 import com.laimory.server.timeline.entity.TimelineEventItem;
+import com.laimory.server.timeline.entity.TimelineEventPlaceCandidate;
 import com.laimory.server.timeline.payload.PhotoPayload;
 import com.laimory.server.timeline.repository.DailyRecordRepository;
 import com.laimory.server.timeline.repository.TimelineEventItemRepository;
+import com.laimory.server.timeline.repository.TimelineEventPlaceCandidateRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
 import java.time.Instant;
@@ -93,6 +97,10 @@ class TimelineAiTaskFlowIntegrationTest {
     private TimelineItemRepository timelineItemRepository;
     @Autowired
     private TimelineEventItemRepository timelineEventItemRepository;
+    @Autowired
+    private TimelineEventPlaceCandidateRepository timelineEventPlaceCandidateRepository;
+    @Autowired
+    private TimelineEventEditService timelineEventEditService;
     @Autowired
     private RedisGateway redis;
     @Autowired
@@ -269,6 +277,112 @@ class TimelineAiTaskFlowIntegrationTest {
     }
 
     @Test
+    void resultWithPlaceCandidates_storesThemInPriorityOrderAndOverwritesPlaceWithFirstCandidate() {
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+
+        String callbackToken = resultService.storeResult(VERSION, taskId, input.taskToken(),
+                resultWithPlaceCandidates(input, "AI가 따로 고른 장소", "성수동 카페", "△△공원", "을지로 식당")).taskToken();
+
+        TimelineEvent event = timelineEventRepository
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())
+                .getFirst();
+        assertThat(event.getPlace()).isEqualTo("성수동 카페");
+        assertThat(event.getTitle()).isEqualTo("점심 식사");
+        assertThat(event.getSubtitle()).isEqualTo("{place}에서 친구와 파스타");
+        assertThat(event.getLatitude()).isEqualTo(37.5445);
+        assertThat(event.getLongitude()).isEqualTo(127.0559);
+        assertThat(storedCandidateNames(event.getTimelineEventId()))
+                .containsExactly("성수동 카페", "△△공원", "을지로 식당");
+
+        // SUCCESS polling 응답에도 같은 순서·좌표·템플릿 그대로 실린다.
+        callbackService.handleCallback(VERSION, taskId, callbackToken, success());
+        TimelineEventResponse polled = pollingService.poll(VERSION, SUBJECT_ID, taskId).result().events().getFirst();
+        assertThat(polled.placeCandidates()).extracting(TimelineEventResponse.PlaceCandidateResponse::name)
+                .containsExactly("성수동 카페", "△△공원", "을지로 식당");
+        assertThat(polled.subtitle()).isEqualTo("{place}에서 친구와 파스타");
+        assertThat(polled.latitude()).isEqualTo(37.5445);
+        assertThat(polled.longitude()).isEqualTo(127.0559);
+    }
+
+    @Test
+    void placeAssignment_changesOnlyPlaceAndKeepsCandidatesForLaterReselection() {
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+        resultService.storeResult(VERSION, taskId, input.taskToken(),
+                resultWithPlaceCandidates(input, null, "성수동 카페", "△△공원"));
+        Long eventId = timelineEventRepository
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())
+                .getFirst().getTimelineEventId();
+
+        timelineEventEditService.updatePlace(VERSION, SUBJECT_ID, eventId,
+                new UpdateTimelineEventPlaceRequest("△△공원", null, null));
+        timelineEventEditService.updatePlace(VERSION, SUBJECT_ID, eventId,
+                new UpdateTimelineEventPlaceRequest("직접 입력한 장소", null, null));
+
+        TimelineEvent event = timelineEventRepository.findByTimelineEventIdAndDeletedAtIsNull(eventId).orElseThrow();
+        assertThat(event.getPlace()).isEqualTo("직접 입력한 장소");
+        assertThat(event.getTitle()).isEqualTo("점심 식사");
+        assertThat(event.getSubtitle()).isEqualTo("{place}에서 친구와 파스타");
+        assertThat(event.getLatitude()).isEqualTo(37.5445);
+        assertThat(event.getLongitude()).isEqualTo(127.0559);
+        assertThat(storedCandidateNames(eventId)).containsExactly("성수동 카페", "△△공원");
+    }
+
+    @Test
+    void candidateCoordinatesOverwriteEventCoordinatesAndRoundTripThroughPlaceAssignment() {
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+        String callbackToken = resultService.storeResult(VERSION, taskId, input.taskToken(),
+                resultWithPlaceCandidates(input, List.of(
+                        new AiTimelineResultRequest.PlaceCandidate("성수동 카페", 37.5447, 127.0561),
+                        new AiTimelineResultRequest.PlaceCandidate("△△공원", 90.0, -180.0)))).taskToken();
+        Long eventId = timelineEventRepository
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())
+                .getFirst().getTimelineEventId();
+
+        // 1번 후보 좌표가 AI 관측 좌표(37.5445, 127.0559)를 덮는다(#620).
+        callbackService.handleCallback(VERSION, taskId, callbackToken, success());
+        TimelineEventResponse polled = pollingService.poll(VERSION, SUBJECT_ID, taskId).result().events().getFirst();
+        assertThat(polled.latitude()).isEqualTo(37.5447);
+        assertThat(polled.longitude()).isEqualTo(127.0561);
+        assertThat(polled.placeCandidates()).containsExactly(
+                new TimelineEventResponse.PlaceCandidateResponse("성수동 카페", 37.5447, 127.0561),
+                new TimelineEventResponse.PlaceCandidateResponse("△△공원", 90.0, -180.0));
+
+        // 저장한 후보 좌표(경계값 포함)는 장소 지정 PUT 검증을 그대로 통과한다.
+        timelineEventEditService.updatePlace(VERSION, SUBJECT_ID, eventId,
+                new UpdateTimelineEventPlaceRequest("△△공원", 90.0, -180.0));
+
+        TimelineEvent event = timelineEventRepository.findByTimelineEventIdAndDeletedAtIsNull(eventId).orElseThrow();
+        assertThat(event.getPlace()).isEqualTo("△△공원");
+        assertThat(event.getLatitude()).isEqualTo(90.0);
+        assertThat(event.getLongitude()).isEqualTo(-180.0);
+    }
+
+    @Test
+    void firstCandidateWithoutCoordinatesKeepsAiEventCoordinates() {
+        // 1번 후보만 본다 — 2번 후보에 좌표가 있어도 Event 좌표는 AI 관측 좌표 그대로다.
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+
+        resultService.storeResult(VERSION, taskId, input.taskToken(), resultWithPlaceCandidates(input, List.of(
+                new AiTimelineResultRequest.PlaceCandidate("성수동 카페", null, null),
+                new AiTimelineResultRequest.PlaceCandidate("△△공원", 37.5444, 127.0374))));
+
+        TimelineEvent event = timelineEventRepository
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())
+                .getFirst();
+        assertThat(event.getPlace()).isEqualTo("성수동 카페");
+        assertThat(event.getLatitude()).isEqualTo(37.5445);
+        assertThat(event.getLongitude()).isEqualTo(127.0559);
+    }
+
+    @Test
     void resultRetry_afterLostResponse_reissuesCallbackTokenWithoutDuplicatingGraph() {
         // 200 응답이 유실된 상황 — AI는 이미 소비한 result token으로 같은 body를 다시 보낸다.
         String taskId = createDraft(sources());
@@ -405,7 +519,7 @@ class TimelineAiTaskFlowIntegrationTest {
         AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, taskToken);
         String resultToken = input.taskToken();
         AiTimelineResultRequest invalid = new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.UNKNOWN, "아침", null, null, null, null,
+                TimelineEventType.UNKNOWN, "아침", null, null, null, null, null, null, null,
                 OffsetDateTime.of(DATE.atTime(9, 0), KST), null, List.of("raw-not-mine"))));
 
         assertThatThrownBy(() -> resultService.storeResult(VERSION, taskId, resultToken, invalid))
@@ -639,9 +753,38 @@ class TimelineAiTaskFlowIntegrationTest {
     private AiTimelineResultRequest resultFrom(AiTimelineTaskInputResponse input, String question,
                                                String place, String address) {
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
-                TimelineEventType.UNKNOWN, "아침", null, question, place, address,
+                TimelineEventType.UNKNOWN, "아침", null, question, place, address, null, null, null,
                 input.sourceItems().get(0).startAt(), null,
                 input.sourceItems().stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
+    }
+
+    /** 장소 후보(우선순위 순서)·대표 좌표·subtitle {place} 템플릿을 실은 결과. */
+    private AiTimelineResultRequest resultWithPlaceCandidates(AiTimelineTaskInputResponse input, String place,
+                                                              String... candidateNames) {
+        return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.MEAL, "점심 식사", "{place}에서 친구와 파스타", null, place, null,
+                37.5445, 127.0559,
+                java.util.Arrays.stream(candidateNames)
+                        .map(name -> new AiTimelineResultRequest.PlaceCandidate(name, null, null)).toList(),
+                input.sourceItems().get(0).startAt(), null,
+                input.sourceItems().stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
+    }
+
+    /** 좌표를 실은 장소 후보와 AI 관측 좌표(37.5445, 127.0559)를 함께 보낸 결과. */
+    private AiTimelineResultRequest resultWithPlaceCandidates(AiTimelineTaskInputResponse input,
+                                                              List<AiTimelineResultRequest.PlaceCandidate> candidates) {
+        return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.MEAL, "점심 식사", "{place}에서 친구와 파스타", null, null, null,
+                37.5445, 127.0559, candidates,
+                input.sourceItems().get(0).startAt(), null,
+                input.sourceItems().stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
+    }
+
+    private List<String> storedCandidateNames(Long eventId) {
+        return timelineEventPlaceCandidateRepository
+                .findByTimelineEventIdInOrderByTimelineEventPlaceCandidateIdAsc(List.of(eventId)).stream()
+                .map(TimelineEventPlaceCandidate::getName)
+                .toList();
     }
 
     private AiTimelineDispatchRequest capturedRequest() {

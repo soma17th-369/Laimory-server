@@ -184,3 +184,64 @@ groups:
           service: laimory
           severity: warning
         isPaused: false
+  - orgId: 1
+    name: laimory-ai-failure-recent
+    folder: Laimory
+    interval: 30s
+    rules:
+      - uid: laimory_ai_failure_recent
+        title: Recent timeline AI failures
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'max by (environment) (laimory_credit_history_recent_ai_failed{job="spring_boot",environment="prod"})'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [2], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: '{{ $values.B.Value }} of the last 5 settled timeline creations failed on the AI side.'
+          description: 'Counts AI_FAILED, TIMEOUT and DISPATCH_REJECTED refunds among the five most recent settled timeline creations. It resolves once successes bring the count below 3; the notify_once route sends no repeat while it stays firing.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#recent-timeline-ai-failures
+        labels:
+          job: spring_boot
+          service: laimory
+          severity: warning
+          notify_once: "true"
+        isPaused: false

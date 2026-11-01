@@ -262,6 +262,8 @@ alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 �
   환경 중립이다.
 - **prod 고정 운영 업무** — `laimory_inquiry_unanswered_daily`(#603)는 장애가 아니라 회신할 문의를 알린다.
   dev 문의는 테스트용이라 미처리로 남는 게 정상이므로 `environment="prod"`로 고정한다.
+  `laimory_ai_failure_recent`(#617)는 실사용자 타임라인 생성의 AI 실패를 보므로 테스트 생성·noop AI가 섞이는
+  dev를 빼고 `environment="prod"`로 고정한다(gauge 자체는 모든 환경에 있다).
 
 새 환경을 붙일 때는 rule을 복제하지 않는다. 그 환경의 시계열이 존재하는지 먼저 확인하고, 없으면
 수집기부터 설치한다.
@@ -287,6 +289,10 @@ curl -fsS -u "$GRAFANA_ADMIN_USER" -X POST \
   http://localhost:3000/api/admin/provisioning/alerting/reload
 unset GRAFANA_ADMIN_USER
 ```
+
+`notification-policy.yml`의 `notify_once="true"` route는 `repeat_interval`을 매우 길게 둬 firing이 이어지는 동안
+같은 알림을 다시 보내지 않는다(#617). resolved 뒤 다시 firing하면 새 알림으로 보낸다. rule label만 merge로 먼저
+반영되고 이 route가 host에 없으면 그 rule은 기본 route(4시간 반복)를 탄다.
 
 `notification-policy.yml`의 `group_by`는 `environment`를 포함한다. 빼면 같은 rule의 dev 알림과
 prod 알림이 한 그룹으로 묶여, 이미 활성인 그룹에 얹힌 알림이 `group_interval`만큼 지연된다.
@@ -1126,6 +1132,31 @@ COMMIT;
 Grafana나 Prometheus가 멈추거나 prod 앱 인스턴스가 모두 내려가 있으면 그날 알림은 빠지고 다음 날 다시 확인한다.
 
 관리자 페이지에서 미처리 문의를 열어 답장 이메일로 회신한 뒤 처리됨을 표시한다. gauge는 5분마다 다시 센다.
+
+### Recent timeline AI failures
+
+`laimory_ai_failure_recent`는 prod에서 결말 난 최근 타임라인 생성 5건 중 AI 실패가 3건 이상이라는 뜻이다(#617).
+생성 1회는 `credit_histories` 1행이라 `CONSUMED`가 성공, `REFUNDED`이면서 `refund_reason`이 `AI_FAILED`(AI 실패
+보고)·`TIMEOUT`(처리 기한 초과)·`DISPATCH_REJECTED`(AI 접수 거절)이면 실패다. 진행 중(`CHARGED`)과
+`TASK_SAVE_FAILED`(서버 Redis 저장 실패)는 창에서 빠진다. gauge `laimory_credit_history_recent_ai_failed`는 1분마다
+다시 세고, 처리 기한 초과는 요청 3분 뒤 환불돼야 창에 들어오므로 알림은 몇 분 늦을 수 있다. `notify_once` route라
+firing 동안 반복 알림이 없고, 성공이 쌓여 실패가 2건 이하가 되면 resolved가 온다.
+
+prod DB 수동 접속 경로로 최근 결말과 사유를 확인한다. 실패 사유가 `TIMEOUT`이 많으면 AI 처리 지연·callback 유실,
+`DISPATCH_REJECTED`가 많으면 AgentCore 호출 거절, `AI_FAILED`가 많으면 AI 내부 실패 쪽부터 application log의
+taskId로 이어 본다.
+
+```sql
+SELECT credit_history_id, reference_id, status, refund_reason, created_at, updated_at
+FROM credit_histories
+WHERE cost_type = 'TIMELINE_CREATION'
+  AND (status = 'CONSUMED'
+       OR (status = 'REFUNDED' AND refund_reason IN ('AI_FAILED', 'TIMEOUT', 'DISPATCH_REJECTED')))
+ORDER BY credit_history_id DESC
+LIMIT 5;
+```
+
+`reference_id`는 taskId다. 환불은 이미 끝났으므로 수동 환불은 필요 없다.
 
 ### Timeline orphan sweeper (PHOTO S3 삭제)
 

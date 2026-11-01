@@ -24,10 +24,11 @@ class CreateTimelineEventRequestSchemaTest {
         // photosToAdd는 #361부터 optional 키다 — properties에는 있고 required에는 없다.
         assertThat(request.getProperties().keySet())
                 .containsExactlyInAnyOrder(
-                        "eventType", "title", "subtitle", "startAt", "endAt", "memo", "photosToAdd");
-        // AI 결과 전용 필드는 request schema에 없다.
+                        "eventType", "title", "subtitle", "startAt", "endAt", "memo", "photosToAdd",
+                        "place", "latitude", "longitude");
+        // place·좌표는 #616부터 optional 키다. AI 결과 전용 필드는 request schema에 없다.
         assertThat(request.getProperties())
-                .doesNotContainKeys("question", "place", "address", "items");
+                .doesNotContainKeys("question", "address", "items");
     }
 
     @Test

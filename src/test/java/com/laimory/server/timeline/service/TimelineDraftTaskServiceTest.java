@@ -984,7 +984,7 @@ class TimelineDraftTaskServiceTest {
         ReflectionTestUtils.setField(draft, "dailyRecordId", 7L);
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.of(draft));
         TimelineEvent event = TimelineEvent.of(
-                7L, TimelineEventType.UNKNOWN, RECORD_AT, null, "t", null, null, null, null);
+                7L, TimelineEventType.UNKNOWN, RECORD_AT, null, "t", null, null, null, null, null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         when(timelineEventService.findByDailyRecordId(7L)).thenReturn(List.of(event));
         when(timelineEventItemService.findByTimelineEventIds(List.of(11L)))
@@ -1012,7 +1012,7 @@ class TimelineDraftTaskServiceTest {
         ReflectionTestUtils.setField(draft, "dailyRecordId", 7L);
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.of(draft));
         TimelineEvent event = TimelineEvent.of(
-                7L, TimelineEventType.UNKNOWN, RECORD_AT, null, "t", null, null, null, null);
+                7L, TimelineEventType.UNKNOWN, RECORD_AT, null, "t", null, null, null, null, null, null);
         ReflectionTestUtils.setField(event, "timelineEventId", 11L);
         when(timelineEventService.findByDailyRecordId(7L)).thenReturn(List.of(event));
         when(timelineEventItemService.findByTimelineEventIds(List.of(11L)))
