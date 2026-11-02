@@ -100,7 +100,7 @@ class AgentCoreUserMemoryUpdateDispatcherTest {
                                 TimelineEventType.MEAL, "점심", null, "무엇을 드셨나요?",
                                 OffsetDateTime.of(2026, 8, 4, 12, 10, 0, 0, KST),
                                 OffsetDateTime.of(2026, 8, 4, 13, 0, 0, 0, KST),
-                                "맛있었다")))));
+                                "맛있었다", 37.5445, 127.0559)))));
     }
 
     private void respondWith(int statusCode, String body) {

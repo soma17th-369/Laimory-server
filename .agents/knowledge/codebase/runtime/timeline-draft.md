@@ -343,7 +343,8 @@ record인지는 따지지 않는다 — append UX가 없어 빈 DRAFT는 재사�
 - **접수 body와 base memory 지문은 guard를 잡은 뒤 만든다.** 밀려 있는 동안 앞선 날짜의 갱신이 문서를
   바꾸므로, 미리 조립해 두면 낡은 문서를 base로 삼게 되고 미루는 것 자체가 무의미해진다.
 - 접수 body는 확정된 타임라인을 구조화한 `dailyTimelines[].events[]`다(`question`·`memo` 포함, `items[]`와
-  행 PK 제외, 시각은 record timezone offset). 접수 자체를 다시 시도하지는 않는다 — AI를 두들기는 루프가
+  행 PK 제외, 시각은 record timezone offset). Event 좌표는 접수 시점 현재 값을 싣되 `MOVEMENT`는 두 값을
+  null로 보낸다(#632). 접수 자체를 다시 시도하지는 않는다 — AI를 두들기는 루프가
   없고 circuit breaker도 두지 않는다. 재시도는 다음날 배치가 담당한다.
 - **접수 body의 텍스트는 v1 privacy 치환본이다** — base 문서(`userMemory`)는 `redactTree`, Event
   `title`/`subtitle`/`question`은 255자·`memo`는 500자 token-aware bounded 치환이다. DB에는 사용자 수정
