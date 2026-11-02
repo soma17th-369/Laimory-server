@@ -32,6 +32,7 @@ import reactor.netty.resources.ConnectionProvider;
  * <ul>
  *   <li>좌표 순서: 요청 파라미터는 x=경도, y=위도(내부 표현과 뒤집힘).
  *   <li>blank 정규화: 카카오는 부재 필드를 빈 문자열로 주는 경우가 있어 null로 정규화한다.
+ *   <li>address: 지번 우선, 없으면 도로명이다. keyword 질의어와 따로 고른다(#627).
  *   <li>places: coord2address가 준 주소(도로명 우선, 지번 fallback)를 질의어로 keyword 검색 1콜.
  *       단일 콜이라 응답 순서(sort=distance)를 그대로 신뢰하고, coord2address의 건물명은 places 맨 앞에 합류한다.
  *   <li>주소가 없으면 keyword 질의어가 없으므로 콜 자체를 생략한다(정상 빈 결과).
@@ -141,8 +142,8 @@ class KakaoMapPlaceProviderTest {
     }
 
     @Test
-    void lookup_usesRoadAddressAsKeywordQuery_whenBothAddressesPresent() throws InterruptedException {
-        // 도로명·지번이 둘 다 있으면 질의어는 도로명 — 한 도로명에 지번 여러 개가 매핑될 때 도로명 결과가 더 넓다.
+    void lookup_returnsLotAddress_andSearchesByRoadAddress_whenBothAddressesPresent() throws InterruptedException {
+        // 둘 다 있으면 저장·AI 입력 주소는 지번, keyword 질의어는 도로명이다(#627). 호출은 늘지 않는다.
         enqueueJson("""
                 {"documents":[{
                   "road_address":{"address_name":"경기 하남시 미사대로 750","building_name":""},
@@ -152,14 +153,15 @@ class KakaoMapPlaceProviderTest {
 
         GeoPlace geo = lookup();
 
-        assertThat(geo.address()).isEqualTo("경기 하남시 미사대로 750");
+        assertThat(geo.address()).isEqualTo("경기 하남시 신장동 616");
         takeRequest();
         assertThat(takeRequest().getRequestUrl().queryParameter("query")).isEqualTo("경기 하남시 미사대로 750");
+        assertThat(server.getRequestCount()).isEqualTo(2);
     }
 
     @Test
     void lookup_fallsBackToLotAddress_asAddressAndKeywordQuery_whenRoadAddressMissing() throws InterruptedException {
-        // 도로명주소는 건물에만 부여돼 도로 위 좌표(교차로 등)엔 없다 → 주소도 keyword 질의어도 지번으로 fallback.
+        // 도로명주소는 건물에만 부여돼 도로 위 좌표(교차로 등)엔 없다 → 주소도 keyword 질의어도 지번이다.
         enqueueJson("""
                 {"documents":[{"road_address":null,"address":{"address_name":"서울 강남구 역삼동 858"}}]}""");
         enqueueJson("{\"documents\":[]}");
@@ -169,6 +171,23 @@ class KakaoMapPlaceProviderTest {
         assertThat(geo.address()).isEqualTo("서울 강남구 역삼동 858");
         takeRequest();
         assertThat(takeRequest().getRequestUrl().queryParameter("query")).isEqualTo("서울 강남구 역삼동 858");
+    }
+
+    @Test
+    void lookup_fallsBackToRoadAddress_asAddressAndKeywordQuery_whenLotAddressMissing() throws InterruptedException {
+        // 지번이 빠진 응답은 실측 기록이 없지만, 주소를 잃지 않도록 도로명으로 대체한다(#627).
+        enqueueJson("""
+                {"documents":[{
+                  "road_address":{"address_name":"경기 하남시 미사대로 750","building_name":""},
+                  "address":null
+                }]}""");
+        enqueueJson("{\"documents\":[]}");
+
+        GeoPlace geo = lookup();
+
+        assertThat(geo.address()).isEqualTo("경기 하남시 미사대로 750");
+        takeRequest();
+        assertThat(takeRequest().getRequestUrl().queryParameter("query")).isEqualTo("경기 하남시 미사대로 750");
     }
 
     @Test
