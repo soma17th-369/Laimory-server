@@ -18,7 +18,7 @@ import java.util.List;
  * {@code TimelineEvent} 목록이다. 그래서 확정된 타임라인을 그대로 옮긴 {@code dailyTimelines}로 합의했다.
  * 이름·필드 구성은 형제 계약({@link AiTimelineTaskInputResponse}·{@link AiTimelineResultRequest})을 따른다:
  * 하루 식별은 {@code recordDate}/{@code recordTimeZone}, Event는 공통 6개 필드를 같은 순서로 두고
- * 흐름별 추가 필드 하나를 끝에 붙인다(결과 저장은 {@code sourceRawIds}, 여기는 {@code memo}).
+ * 흐름별 추가 필드를 끝에 붙인다(결과 저장은 {@code sourceRawIds}, 여기는 {@code memo}와 선택 좌표).
  *
  * <p>{@code items[]}(사진 등)는 싣지 않는다 — vision 없이 기여가 없고 payload만 키운다. 장소·시간은 이미
  * AI가 그 item들로 쓴 {@code title}·{@code subtitle}에 녹아 있다. 행 PK({@code timelineEventId}·
@@ -67,7 +67,11 @@ public record AiUserMemoryUpdateRequest(
             @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ssXXX")
             OffsetDateTime endAt,
             @Schema(description = "사용자가 쓴 메모(최대 500자). 없으면 null", nullable = true)
-            String memo
+            String memo,
+            @Schema(description = "Event의 현재 대표 위도. 이동 이벤트 또는 좌표가 없으면 null", nullable = true)
+            Double latitude,
+            @Schema(description = "Event의 현재 대표 경도. 이동 이벤트 또는 좌표가 없으면 null", nullable = true)
+            Double longitude
     ) {
     }
 }
