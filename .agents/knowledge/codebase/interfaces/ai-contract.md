@@ -136,6 +136,9 @@ Task-Token: <taskToken>
   식별자라 staging 치환과 응답 조립 모두에서 제외돼 **원문 그대로 전달된다** — AI가 `photoUrl`을 HTTP
   GET으로 소비하므로 원문이어야 한다.
   PHOTO payload도 좌표를 가지면 STAY/MOVEMENT와 같은 `address`·`places`를 갖는다(서버 지오코딩 enrich).
+  `address`는 지번주소 우선, 없으면 도로명주소다(#627). 형식을 구분하는 필드는 없고 배포 전 staging 행은
+  도로명일 수 있다. 같은 저장본이 최종 Item payload로 승격되고 AI가 이 값을 결과 `address`로 돌려주면 Event
+  주소가 되므로, 앱 응답의 주소도 신규 draft부터 같은 형식이다.
   좌표가 없는 PHOTO와 Event PATCH·Event 생성 POST로 수동 추가된 PHOTO에는 두 필드가 없다 — 수동
   추가는 enrich 경로를 타지 않는다.
   지오코딩이 허용 범위에서 부분 실패한 payload는 `address` key가 생략되고

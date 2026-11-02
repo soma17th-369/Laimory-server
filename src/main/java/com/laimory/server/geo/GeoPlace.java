@@ -5,6 +5,8 @@ import java.util.List;
 /**
  * 좌표 enrich 결과(주소·주변 장소).
  *
+ * <p>{@code address}는 payload에 저장돼 AI 입력으로 나가는 주소다 — 지번 우선, 없으면 도로명이다(#627).
+ *
  * <p>provider 조회 실패는 예외({@link MapPlaceLookupException})로 전달돼 여기 인코딩되지 않는다.
  * {@code address} null = noop이거나 주소 부재이거나 <b>허용된 실패 좌표의 fallback</b>.
  * {@code places}는 null=noop 미연동, 빈 배열=정상 조회했으나 주변 장소 없음 또는 허용 실패 fallback이다

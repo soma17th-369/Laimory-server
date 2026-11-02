@@ -198,6 +198,20 @@ class TimelineAiTaskInputServiceTest {
                 "[{\"name\":\"강남역\",\"latitude\":37.4979,\"longitude\":127.0276}]");
     }
 
+    @Test
+    void inputKeepsStoredAddressOfStayPhotoAndMovementEndpoints() {
+        givenInputPendingTaskWithSources(placeSources());
+
+        AiTimelineTaskInputResponse response = service.getInput("v1", TASK_ID, TASK_TOKEN);
+
+        List<JsonNode> payloads = response.sourceItems().stream()
+                .map(AiTimelineTaskInputResponse.SourceItem::payload).toList();
+        assertThat(payloads.get(0).get("address").textValue()).isEqualTo("서울 성동구 성수동2가 322-3");
+        assertThat(payloads.get(1).get("address").textValue()).isEqualTo("서울 성동구 성수동2가 289-5");
+        assertThat(payloads.get(2).get("start").get("address").textValue()).isEqualTo("서울 강남구 역삼동 858");
+        assertThat(payloads.get(2).get("end").get("address").textValue()).isEqualTo("서울 강남구 대치동 509");
+    }
+
     private void givenInputPendingTaskWithSources(List<TimelineDraftSourceItem> sources) {
         when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.INPUT_PENDING)));
         when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(
@@ -209,15 +223,19 @@ class TimelineAiTaskInputServiceTest {
     /** STAY(객체·옛 문자열 혼재), PHOTO(객체 + clientPhotoUri), MOVEMENT(start·end 객체) 순서. */
     private static List<TimelineDraftSourceItem> placeSources() {
         ObjectMapper mapper = new ObjectMapper();
-        ObjectNode stay = mapper.createObjectNode().put("latitude", 37.5446).put("longitude", 127.0559);
+        ObjectNode stay = mapper.createObjectNode().put("latitude", 37.5446).put("longitude", 127.0559)
+                .put("address", "서울 성동구 성수동2가 322-3");
         stay.putArray("places").add(place(mapper, "모수 성수", 37.5447, 127.0561)).add("옛 장소");
         ObjectNode photo = mapper.createObjectNode()
                 .put("filename", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg")
-                .put("clientPhotoUri", "content://media/external/images/42");
+                .put("clientPhotoUri", "content://media/external/images/42")
+                .put("address", "서울 성동구 성수동2가 289-5");
         photo.putArray("places").add(place(mapper, "성수역", 37.5446, 127.0557));
         ObjectNode movement = mapper.createObjectNode();
-        movement.putObject("start").putArray("places").add(place(mapper, "강남역", 37.4979, 127.0276));
-        movement.putObject("end").putArray("places").add(place(mapper, "선릉역", 37.5045, 127.0490));
+        movement.putObject("start").put("address", "서울 강남구 역삼동 858")
+                .putArray("places").add(place(mapper, "강남역", 37.4979, 127.0276));
+        movement.putObject("end").put("address", "서울 강남구 대치동 509")
+                .putArray("places").add(place(mapper, "선릉역", 37.5045, 127.0490));
         return List.of(
                 TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.STAY, "raw-1",
                         DATE.atTime(9, 0), DATE.atTime(10, 0), stay),

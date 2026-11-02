@@ -157,6 +157,23 @@ class SourceItemEnrichmentServiceTest {
     }
 
     @Test
+    void enrich_fillsEachMovementEndpointWithItsOwnCoordinateAddress() {
+        stubLookupAll(Map.of(
+                new Coordinate(37.4979, 127.0276), new GeoPlace("서울 강남구 역삼동 858", List.of()),
+                new Coordinate(37.5340, 126.9668), new GeoPlace("서울 용산구 청파동3가 1", List.of())));
+        List<SourceItemDto> sources = List.of(new SourceItemDto(ItemType.MOVEMENT, "raw-mov", T, null,
+                new MovementPayload(
+                        new MovementEndpoint(37.4979, 127.0276, null, null),
+                        new MovementEndpoint(37.5340, 126.9668, null, null),
+                        "IN_VEHICLE", 5200.0)));
+
+        MovementPayload movement = (MovementPayload) service().enrich(sources, SUBJECT_ID).get(0).payload();
+
+        assertThat(movement.start().address()).isEqualTo("서울 강남구 역삼동 858");
+        assertThat(movement.end().address()).isEqualTo("서울 용산구 청파동3가 1");
+    }
+
+    @Test
     void enrichedPlacesSerializeAsNameAndCoordinateObjects() {
         stubLookupAll(Map.of(new Coordinate(37.5340, 126.9668), new GeoPlace("서울 용산구 청파로20길 95",
                 List.of(new NearbyPlace("그랑씨엘", 37.5345, 126.9675)))));

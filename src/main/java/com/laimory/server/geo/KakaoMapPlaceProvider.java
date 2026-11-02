@@ -41,6 +41,9 @@ import reactor.netty.internal.shaded.reactor.pool.PoolAcquireTimeoutException;
  * 카카오는 무필터 좌표 반경 검색을 제공하지 않고 category 그룹 코드 순회는 코드 밖 업종을 놓치므로 이 방식을
  * 쓰며, 광역 지번 질의에서 원거리 POI(테마거리 등)가 섞이는 것은 {@code radius}가 걸러낸다.
  *
+ * <p>주소는 두 용도로 따로 고른다(#627) — keyword 질의어는 도로명 우선, {@link GeoPlace#address()}는 지번 우선이다.
+ * 둘 다 같은 coord2address 응답에서 읽으므로 콜이 늘지 않는다.
+ *
  * <p>카카오 요청 파라미터는 {@code x}=경도, {@code y}=위도로 순서가 뒤집힌다.
  * transport는 reactive({@link WebClient})다 — 좌표 간 병렬 조회를 위해 {@link Mono}를 반환하고, blocking
  * 경계는 {@link GeocodingService}가 전담한다. 전용 pool·connect/response timeout·logical deadline은
@@ -121,7 +124,7 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
                     .flatMap(address -> fetchPlaces(address, latitude, longitude, calls)
                             .onErrorResume(MapPlaceLookupException.class, failure -> Mono.just(List.of()))
                             .map(places -> new GeoPlace(
-                                    address.address(),
+                                    address.lotFirstAddress(),
                                     mergeBuildingName(address.buildingName(), latitude, longitude, places))))
                     .doOnEach(signal -> logLookupSuccess(signal, calls, startNanos));
         });
@@ -143,6 +146,7 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
                     String lotAddress = blankToNull(document.path("address").path("address_name").asText(null));
                     return new KakaoAddress(
                             roadAddress != null ? roadAddress : lotAddress,
+                            lotAddress != null ? lotAddress : roadAddress,
                             blankToNull(road.path("building_name").asText(null)));
                 });
     }
@@ -408,6 +412,7 @@ public class KakaoMapPlaceProvider implements MapPlaceProvider {
         }
     }
 
-    private record KakaoAddress(String address, String buildingName) {
+    /** {@code address}는 keyword 질의어(도로명 우선), {@code lotFirstAddress}는 저장되는 주소(지번 우선)다. */
+    private record KakaoAddress(String address, String lotFirstAddress, String buildingName) {
     }
 }
