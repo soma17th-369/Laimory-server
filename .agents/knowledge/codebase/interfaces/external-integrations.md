@@ -39,6 +39,8 @@ OAuth provider, Kakao Maps, S3/CloudFront, FCM push와 외부 AI mode의 현재 
 - 조회 대상은 STAY 좌표, MOVEMENT start/end와 좌표를 가진 PHOTO의 합집합을 dedupe한 unique coordinate다.
 - unique coordinate마다 reverse geocoding 1회 + 주소(도로명 우선, 지번 fallback)를 질의어로 한
   keyword place search 1회, 정상 2회 외부 호출한다(주소가 없는 좌표는 keyword search를 생략해 1회).
+- 저장 주소와 keyword 질의어는 같은 coord2address 응답에서 따로 고른다(#627). payload `address`는 지번 우선,
+  없으면 도로명이고 질의어는 도로명 우선, 없으면 지번이다. 도로명은 좌표에 따라 오지 않을 수 있다.
 - keyword search 결과는 "같은 주소(건물)의 입주 장소" 보장이 아니라 주소 질의어 + 반경 50m 매칭의
   실측 관찰 기반 휴리스틱이다.
 - 주변 장소는 `{name, latitude, longitude}`로 저장한다(#620). keyword 장소의 좌표는 document의 `y`(위도)·`x`(경도)

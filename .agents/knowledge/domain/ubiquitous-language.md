@@ -79,7 +79,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 이동 페이로드 | Movement Payload | 현재 구현 | `start`/`end` endpoint, `transports`, `distanceMeters`를 담는다. |
 | 이동 끝점 | Movement Endpoint | 현재 구현 | 출발·도착의 필수 좌표와 서버 파생 주소·주변 장소를 담는 중첩 값이다. |
 | 이동수단 | transports | 현재 구현 | 단일 문자열 이동수단 분류다. |
-| 주소 | address | 현재 구현 | 서버가 reverse geocoding한 nullable 주소다. 도로명 우선, 없으면 지번이며 client 값은 무시한다. JSON key 생략(NON_NULL)은 noop 미연동, 정상 조회했으나 주소 부재, 허용된 지오코딩 실패 좌표 세 경우 모두 가능하다 — wire에 실패 marker는 없고 내부 구분은 서버 outcome/metric이 담당한다. |
+| 주소 | address | 현재 구현 | 서버가 reverse geocoding한 nullable 주소다. 지번 우선, 없으면 도로명이며 client 값은 무시한다(#627). #627 전 저장본은 도로명 우선이라 두 형식이 공존한다. JSON key 생략(NON_NULL)은 noop 미연동, 정상 조회했으나 주소 부재, 허용된 지오코딩 실패 좌표 세 경우 모두 가능하다 — wire에 실패 marker는 없고 내부 구분은 서버 outcome/metric이 담당한다. |
 | 주변 장소 목록 | places | 현재 구현 | 거리순 주변 장소(`NearbyPlace` — `{name, latitude, longitude}`, 좌표 필수) 배열이다(#620). 저장본에는 #620 이전에 저장된 이름 문자열 원소가 남아 있다. NULL은 noop으로 JSON key 생략, 빈 배열은 정상 조회했으나 장소 없음 또는 허용된 지오코딩 실패 좌표다(wire 구분 없음). client 값은 무시한다. |
 | 주변 장소 | Nearby Place | 현재 구현 | 주변 장소 목록의 원소(`NearbyPlace`)다. 이름과 그 장소의 좌표를 갖는다 — keyword 검색 장소는 카카오 장소 좌표, 건물명은 조회한 관측 좌표다. Event의 장소 후보와 다른 개념이다. |
 | 머문 시간 텍스트 | durationText | 현재 구현 | 서버가 `startAt/endAt`으로 계산한 텍스트다. client 값은 받지 않는다. |
