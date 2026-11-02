@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.ApiVersion;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.error.ExceptionType;
+import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.timeline.ProcessStage;
 import com.laimory.server.timeline.TaskStatus;
@@ -14,6 +15,7 @@ import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import com.laimory.server.user.service.UserMemoryService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -29,7 +31,7 @@ import org.springframework.stereotype.Service;
  * AI 입력 조회 오케스트레이터 — 서버가 소유하는 정규 AI 입력을 조립하고 다음 RESULT token을 발급한다.
  *
  * <p>순서가 load-bearing이다: task 조회 → <b>현재 task token 검증</b> → PROCESSING/INPUT_PENDING 확인
- * <b>다음에야</b> 개인 데이터(record·source)를 읽는다. 이 endpoint는 {@code /s/api}라 request
+ * <b>다음에야</b> 개인 데이터(record·source·User Memory)를 읽는다. 이 endpoint는 {@code /s/api}라 request
  * principal이 없고 token만이 인증 수단이다.
  *
  * <p>응답에는 DB 식별자를 담지 않는다({@code userId}·{@code dailyRecordId}·행 PK 없음). 시각은 staging의
@@ -48,17 +50,23 @@ public class TimelineAiTaskInputService {
     private final TimelineTaskService timelineTaskService;
     private final DailyRecordService dailyRecordService;
     private final TimelineDraftSourceItemService timelineDraftSourceItemService;
+    private final UserMemoryService userMemoryService;
+    private final PrivacyRedactor privacyRedactor;
     private final Clock clock;
     private final Duration retryWindow;
 
     public TimelineAiTaskInputService(TimelineTaskService timelineTaskService,
                                       DailyRecordService dailyRecordService,
                                       TimelineDraftSourceItemService timelineDraftSourceItemService,
+                                      UserMemoryService userMemoryService,
+                                      PrivacyRedactor privacyRedactor,
                                       Clock clock,
                                       @Value("${app.ai.retry-window:15s}") Duration retryWindow) {
         this.timelineTaskService = timelineTaskService;
         this.dailyRecordService = dailyRecordService;
         this.timelineDraftSourceItemService = timelineDraftSourceItemService;
+        this.userMemoryService = userMemoryService;
+        this.privacyRedactor = privacyRedactor;
         this.clock = clock;
         this.retryWindow = retryWindow;
     }
@@ -99,11 +107,17 @@ public class TimelineAiTaskInputService {
         if (ApiVersion.of(applicationVersion).isLowerThan(ApiVersion.of("v2"))) {
             sourceItems = sourceItems.stream().map(TimelineAiTaskInputService::withPlaceNames).toList();
         }
+        // 서버→AI 텍스트는 v1 치환본이어야 한다 — User Memory 갱신 접수와 같이 제외 필드 없이 치환한다.
+        // 치환 실패는 원문 fallback 없이 전파된다(token 회전 전이라 AI 재시도가 가능하다).
+        JsonNode userMemory = userMemoryService.find(task.subjectId())
+                .map(memory -> privacyRedactor.redactTree(memory).node())
+                .orElse(null);
         AiTimelineTaskInputResponse response = new AiTimelineTaskInputResponse(
                 taskId,
                 record.getRecordDate(),
                 record.getRecordTimezone(),
                 toOffsetWindow(task.timelineWindow(), recordZone),
+                userMemory,
                 sourceItems,
                 resultToken);
 

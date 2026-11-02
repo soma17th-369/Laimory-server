@@ -17,12 +17,16 @@ import java.util.List;
  * <p>모든 시각은 record timezone 기준 offset 포함 ISO-8601이다 — staging은 wall-clock으로 저장돼 있어
  * 서버가 {@code recordTimeZone}을 붙여 내보내고, 결과 저장 시 같은 규칙으로 되돌린다.
  *
+ * <p>{@code userMemory}는 task owner의 User Memory 문서다(#258). 서버는 내부 구조를 해석하지 않고 textual
+ * leaf만 v1 privacy 치환해 싣는다. 문서가 없으면 {@code null}이고 AI는 메모리 없이 생성한다.
  */
 public record AiTimelineTaskInputResponse(
         String taskId,
         LocalDate recordDate,
         @Schema(example = "Asia/Seoul") String recordTimeZone,
         @Schema(description = "AI가 이번 task에서 이벤트를 만들 시간 범위") Window window,
+        @Schema(nullable = true, description = "task owner의 User Memory 문서(privacy 치환본, 없으면 null)")
+        JsonNode userMemory,
         List<SourceItem> sourceItems,
         String taskToken
 ) {
