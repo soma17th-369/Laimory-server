@@ -295,6 +295,74 @@ class UserMemoryUpdateWorkerTest {
     }
 
     @Test
+    void dispatchIncludesCurrentEventCoordinatesAsJsonNumbers() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+        TimelineEvent event = event();
+        event.updateCoordinates(37.5445, 127.0559);
+        when(timelineEventService.findByDailyRecordId(RECORD_ID)).thenReturn(List.of(event));
+
+        worker.dispatchPendingUpdates();
+
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        JsonNode serialized = timeMapper().valueToTree(request.getValue());
+        JsonNode dispatched = serialized.at("/dailyTimelines/0/events/0");
+        assertThat(dispatched.get("latitude").isNumber()).isTrue();
+        assertThat(dispatched.get("latitude").doubleValue()).isEqualTo(37.5445);
+        assertThat(dispatched.get("longitude").isNumber()).isTrue();
+        assertThat(dispatched.get("longitude").doubleValue()).isEqualTo(127.0559);
+    }
+
+    @Test
+    void dispatchIncludesNullCoordinatesWhenEventHasNoCoordinates() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+        when(timelineEventService.findByDailyRecordId(RECORD_ID)).thenReturn(List.of(event()));
+
+        worker.dispatchPendingUpdates();
+
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        JsonNode serialized = timeMapper().valueToTree(request.getValue());
+        JsonNode dispatched = serialized.at("/dailyTimelines/0/events/0");
+        assertThat(dispatched.get("latitude").isNull()).isTrue();
+        assertThat(dispatched.get("longitude").isNull()).isTrue();
+    }
+
+    @Test
+    void dispatchKeepsMovementEventButOmitsItsCoordinates() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+        TimelineEvent movement = TimelineEvent.of(RECORD_ID, TimelineEventType.MOVEMENT,
+                LocalDateTime.of(2026, 8, 5, 9, 0), LocalDateTime.of(2026, 8, 5, 10, 0),
+                "출근", "지하철로 이동", null, null, null, 37.5445, 127.0559);
+        when(timelineEventService.findByDailyRecordId(RECORD_ID)).thenReturn(List.of(movement));
+
+        worker.dispatchPendingUpdates();
+
+        ArgumentCaptor<AiUserMemoryUpdateRequest> request =
+                ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher).dispatch(request.capture());
+        assertThat(request.getValue().dailyTimelines().getFirst().events()).hasSize(1);
+        JsonNode serialized = timeMapper().valueToTree(request.getValue());
+        JsonNode dispatched = serialized.at("/dailyTimelines/0/events/0");
+        assertThat(dispatched.get("eventType").textValue()).isEqualTo("MOVEMENT");
+        assertThat(dispatched.get("latitude").isNull()).isTrue();
+        assertThat(dispatched.get("longitude").isNull()).isTrue();
+        assertThat(movement.getLatitude()).isEqualTo(37.5445);
+        assertThat(movement.getLongitude()).isEqualTo(127.0559);
+    }
+
+    @Test
     void redaction이_실패하면_task_저장과_접수_없이_큐를_그대로_둔다() throws Exception {
         // redacted DTO는 task 저장 전에 완성된다 — 실패는 원문 fallback 없이 task 저장·dispatch를 막고
         // pending을 유지해 다음 배치가 다시 시도한다(기존 worker 실패 계약과 동일 수렴).

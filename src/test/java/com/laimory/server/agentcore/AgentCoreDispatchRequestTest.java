@@ -56,7 +56,7 @@ class AgentCoreDispatchRequestTest {
                                 TimelineEventType.MEAL, "점심", null, "무엇을 드셨나요?",
                                 OffsetDateTime.of(2026, 8, 4, 12, 10, 0, 0, KST),
                                 OffsetDateTime.of(2026, 8, 4, 13, 0, 0, 0, KST),
-                                "맛있었다")))));
+                                "맛있었다", 37.5445, 127.0559)))));
     }
 
     @Test
@@ -94,6 +94,10 @@ class AgentCoreDispatchRequestTest {
         assertThat(json).contains("\"userMemory\":null");
         // 시각은 offset ISO-8601 고정 포맷.
         assertThat(json).contains("\"startAt\":\"2026-08-04T12:10:00+09:00\"");
+        assertThat(MAPPER.readTree(json).at("/payload/dailyTimelines/0/events/0/latitude").doubleValue())
+                .isEqualTo(37.5445);
+        assertThat(MAPPER.readTree(json).at("/payload/dailyTimelines/0/events/0/longitude").doubleValue())
+                .isEqualTo(127.0559);
     }
 
     @Test

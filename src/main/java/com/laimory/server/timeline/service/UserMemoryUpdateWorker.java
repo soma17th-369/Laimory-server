@@ -2,6 +2,7 @@ package com.laimory.server.timeline.service;
 
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.timeline.TaskTokens;
+import com.laimory.server.timeline.TimelineEventType;
 import com.laimory.server.timeline.UserMemoryDigest;
 import com.laimory.server.timeline.dto.AiUserMemoryUpdateRequest;
 import com.laimory.server.timeline.entity.DailyRecord;
@@ -275,8 +276,10 @@ public class UserMemoryUpdateWorker {
      * (title/subtitle/question 255, memo 500). subtitle/question/memo는 nullable — null-safe 치환.
      * subtitle의 {@code {place}}는 치환 전에 Event의 현재 {@code place}로 채워 완성 문장을 보낸다(#612 — DB는 템플릿
      * 그대로). place가 null이면 채우지 않는다.
+     * 이동 Event는 좌표를 싣지 않고, 그 외 Event는 현재 대표 좌표를 그대로 전달한다(#632).
      */
     private AiUserMemoryUpdateRequest.Event toEvent(TimelineEvent event, ZoneId recordZone) {
+        boolean includeCoordinates = event.getEventType() != TimelineEventType.MOVEMENT;
         return new AiUserMemoryUpdateRequest.Event(
                 event.getEventType(),
                 privacyRedactor.redactText(event.getTitle(), EVENT_TEXT_MAX_LENGTH).text(),
@@ -284,7 +287,9 @@ public class UserMemoryUpdateWorker {
                         EVENT_TEXT_MAX_LENGTH).text(),
                 privacyRedactor.redactText(event.getQuestion(), EVENT_TEXT_MAX_LENGTH).text(),
                 toOffset(event.getStartAt(), recordZone), toOffset(event.getEndAt(), recordZone),
-                privacyRedactor.redactText(event.getMemo(), MEMO_MAX_LENGTH).text());
+                privacyRedactor.redactText(event.getMemo(), MEMO_MAX_LENGTH).text(),
+                includeCoordinates ? event.getLatitude() : null,
+                includeCoordinates ? event.getLongitude() : null);
     }
 
     private static String fillPlace(String subtitle, String place) {

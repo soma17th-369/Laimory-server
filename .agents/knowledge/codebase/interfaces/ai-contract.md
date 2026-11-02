@@ -311,7 +311,7 @@ POST {base-url}/v1/user-memory
     "events": [{
       "eventType": "MEAL", "title": "...", "subtitle": "...", "question": "...",
       "startAt": "2026-08-04T12:10:00+09:00", "endAt": "2026-08-04T13:00:00+09:00",
-      "memo": "..."
+      "memo": "...", "latitude": 37.5445, "longitude": 127.0559
     }]
   }]
 }
@@ -322,15 +322,22 @@ POST {base-url}/v1/user-memory
   확정된 타임라인을 그대로 옮긴 `dailyTimelines[]`로 합의했다(2026-08-06).
 - **이름·필드 구성은 형제 계약을 따른다**: 하루 식별은 입력 조회 응답과 같은 `recordDate`/`recordTimeZone`,
   Event는 공통 6개(`eventType`·`title`·`subtitle`·`question`·`startAt`·`endAt`)를 같은 순서로 두고
-  흐름별 추가 필드 하나를 끝에 붙인다 — 결과 저장은 `sourceRawIds`, 여기는 `memo`다.
+  흐름별 추가 필드를 끝에 붙인다 — 결과 저장은 `sourceRawIds`, 여기는 `memo`와 좌표(`latitude`·`longitude`)다.
 - `question`(우리 타임라인 AI가 쓴 문장)과 `memo`(그에 대한 사용자의 답)를 함께 보낸다 — 둘을 나누면
   `"응 좋았어"` 같은 memo가 맥락을 잃는다. `memo` 상한은 AI 규격에 맞춰 500자다.
 - 접수 body의 텍스트는 v1 privacy 치환본이다 — base 문서(`userMemory`)는 `redactTree`, Event
   `title`/`subtitle`/`question`은 255자·`memo`는 500자 token-aware bounded 치환이라 값에 `[REDACTED_*]`
   token literal이 섞일 수 있다(필드 집합·구조 불변). `subtitle`의 `{place}`는 치환 전에 Event의 현재 `place`로
-  채워 완성 문장으로 보낸다(`place`가 null이면 그대로 — #612). 좌표·장소 후보·`place` 필드는 싣지 않는다.
+  채워 완성 문장으로 보낸다(`place`가 null이면 그대로 — #612). 장소 후보·`place` 필드는 싣지 않는다.
   DB에는 사용자 원문(템플릿)이 남고 AI 전달에서만 치환하며,
   결과 대조용 base 문서 지문은 접수 body의 치환본이 아니라 DB 원본 문서로 계산한다.
+- Event `latitude`·`longitude`(#632)는 접수 시점 Event의 현재 대표 좌표다. 키는 항상 싣고 값은 JSON number 또는
+  null이며 둘은 함께 null이거나 함께 값이다. `MOVEMENT` Event는 이벤트 자체는 싣되 DB 좌표 유무와 무관하게
+  두 값을 null로 보내고(DB 좌표는 바꾸지 않는다), 그 외 Event는 좌표가 없을 때만 null이다. 좌표는 privacy
+  치환 대상이 아니며 서버는 좌표 추정·지오코딩을 하지 않는다.
+- 알려진 미구현(AI 측): AI 수신 스키마 `DailyTimelineEvent`에 좌표 필드가 없고 `_project_event` 프롬프트
+  투영도 좌표를 고르지 않는다. 미지 필드는 pydantic 기본값으로 무시되어 접수는 깨지지 않지만, AI 스키마·투영을
+  동기화하기 전까지 좌표는 갱신에 쓰이지 않는다.
 - `items[]`(사진 등)와 행 PK(`timelineEventId`·`dailyRecordId`·`userId`)는 싣지 않는다(입력 조회 응답과
   같은 규칙 — 상관관계는 `taskId`).
 - `dailyTimelines`는 **여러 건일 수 있고 `recordDate` 오름차순이다** — 접수는 하루 1회 배치가 전담하고,
