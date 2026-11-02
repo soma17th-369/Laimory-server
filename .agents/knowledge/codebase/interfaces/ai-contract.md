@@ -126,6 +126,11 @@ Task-Token: <taskToken>
 
 - `taskId`, `taskToken`(결과 저장용 다음 token), `recordDate`, `recordTimeZone`
 - `window.startAt`/`endAt`
+- `userMemory`(#258): task owner의 User Memory 문서 전체를 JSON 객체로 싣는다(문자열로 감싸지 않는다). 문서가
+  없으면 `null`이다(key 생략 없음). 서버는 구조를 해석·검증하지 않고 textual leaf만 제외 필드 없이 `redactTree`로
+  치환한다(§6 접수 body와 같은 규칙 — 저장본은 결과 저장 때 이미 치환돼 대개 그대로다). 스키마 검증은 AI 몫이다 —
+  AI는 v1.0 계약(고정 최상위 필드, `schemaVersion` `"1.0"`, 자연어 필드·`customAttributes` 값 500자)을 어긴
+  문서를 `1106`으로 기록하고 메모리 없이 생성하며 task는 실패하지 않는다. 버전과 무관하다.
 - `sourceItems[]`: `rawId`, `itemType`, 필수 `startAt`·nullable `endAt`, `payload` —
   `startAt` 필수는 draft 입력 경계(400)가 보장하며 AI 입력 계약(`CollectedSourceItem`)과 정렬된다.
   `itemType=HEALTH`의 `payload.metric`은 걸음 수 `STEPS`만 들어오며 다른 literal은 draft HTTP 입력
@@ -161,7 +166,7 @@ Task-Token: <taskToken>
 
 처리 규칙:
 
-- token·PROCESSING·stage 검증을 개인 데이터 조회보다 먼저 한다.
+- token·PROCESSING·stage 검증을 개인 데이터(record·source·User Memory) 조회보다 먼저 한다.
 - 신규 조회는 `INPUT_PENDING`에서만 허용한다.
 - 응답 조립 뒤 새 token hash와 `RESULT_PENDING`을 한 native write로 저장하고 새 token 원문을 응답한다.
   같은 write가 소비된 input token hash와 재시도 마감을 담은 retry receipt를 남긴다.
@@ -478,7 +483,7 @@ timeout이 소유한다.
 - 결과 graph와 채택 source 삭제는 하나의 MySQL transaction이다.
 - callback body에 graph를 추가하지 않는다.
 - 실제 token 값을 문서·로그에 기록하지 않는다.
-- 서버→AI로 나가는 텍스트 값(입력 조회 payload, User Memory 접수 body)은 v1 privacy 치환본이며
+- 서버→AI로 나가는 텍스트 값(입력 조회 payload·`userMemory`, User Memory 접수 body)은 v1 privacy 치환본이며
   `[REDACTED_*]` token literal을 포함할 수 있다 — 치환은 값만 바꾸고 wire DTO 필드 집합은 불변이다. dev 전용 동기 테스트(§7)도 이 invariant를 지킨다 — staging이 없어 전달 직전에 같은 치환을 적용한다.
 
 ## Known Gaps

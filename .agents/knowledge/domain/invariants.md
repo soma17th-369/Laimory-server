@@ -268,7 +268,7 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
   부활시키지 않고 404 `-1001`로 수렴한다. 이 계약이 보장하는 것은 통제된 단일·순차 AI writer의 timeout
   재시도 멱등성이며, 같은 task/token 요청 둘이 첫 state write 전에 실제 동시 실행되는 경우는
   last-write-wins로 수용한다(현재 그런 writer 경로 없음).
-- 입력 조회는 토큰·PROCESSING 검증을 개인 데이터 조회보다 먼저 수행한다. 응답에 `userId`·`dailyRecordId`·
+- 입력 조회는 토큰·PROCESSING 검증을 개인 데이터(record·source·User Memory) 조회보다 먼저 수행한다. 응답에 `userId`·`dailyRecordId`·
   행 PK를 담지 않으며 source는 `rawId`로만 식별한다.
 - 결과 저장은 retry receipt에 선점 표식(`claimedAt`)을 심는 write로 선점하고, 저장된 claim을 읽은 뒤늦은
   same-token 재시도는 409로 끝나 transaction에 재진입하지 않는다. 선점은 token을 바꾸지 않으며,

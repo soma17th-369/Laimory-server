@@ -115,7 +115,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 ### AI input, result and callback
 
 1. **입력 조회**(`GET /s/api/{v}/timeline/drafts/{taskId}/input`, `Task-Token`): task/token/PROCESSING/
-   `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 응답 조립 시 PHOTO
+   `INPUT_PENDING` 확인 **다음에** record·staging·User Memory를 읽어 정규 입력 DTO를 만든다. task owner
+   (`subjectId`)의 User Memory 문서는 제외 필드 없는 `redactTree` 치환본으로 `userMemory`에 싣고, 문서가 없으면
+   `null`이다(#258 — 버전 무관, 재발급도 같은 조립). 응답 조립 시 PHOTO
    payload의 `clientPhotoUri` 값 전체를 `[REDACTED_DEVICE_URI]` 고정 token으로 바꾼다(deep copy —
    entity·DB·앱 응답은 원문 유지). storage 예외 중 이 필드만 치환한다 — `filename`·`photoUrl`은 서버 파생
    식별자라 AI에 원문 그대로 나간다(AI가 `photoUrl`을 HTTP GET으로 소비). `v1` 요청이면 같은 deep copy에서
