@@ -26,7 +26,9 @@ import com.laimory.server.timeline.dto.AiTimelineResultResponse;
 import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.service.TimelineAiResultService;
 import com.laimory.server.timeline.service.TimelineAiTaskInputService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -90,10 +92,15 @@ class TimelineAiTaskControllerTest {
     private TimelineAiResultService timelineAiResultService;
 
     private AiTimelineTaskInputResponse inputResponse() {
+        return inputResponse(null);
+    }
+
+    private AiTimelineTaskInputResponse inputResponse(JsonNode userMemory) {
         return new AiTimelineTaskInputResponse("t-1", DATE, "Asia/Seoul",
                 new AiTimelineTaskInputResponse.Window(
                         OffsetDateTime.of(DATE.atStartOfDay(), KST),
                         OffsetDateTime.of(DATE.plusDays(1).atStartOfDay(), KST)),
+                userMemory,
                 List.of(new AiTimelineTaskInputResponse.SourceItem("raw-1", ItemType.CALENDAR,
                         OffsetDateTime.of(DATE.atTime(9, 0), KST), null,
                         JsonNodeFactory.instance.objectNode().put("title", "스탠드업"))),
@@ -120,6 +127,33 @@ class TimelineAiTaskControllerTest {
                 // DB 식별자·사용자 ID는 응답에 없다.
                 .andExpect(jsonPath("$.dailyRecordId").doesNotExist())
                 .andExpect(jsonPath("$.userId").doesNotExist());
+    }
+
+    @Test
+    void inputSerializesUserMemoryAsJsonObject() throws Exception {
+        // AI는 userMemory를 문자열로 감싼 JSON이 아니라 객체로 받는다(#258).
+        ObjectNode userMemory = JsonNodeFactory.instance.objectNode()
+                .put("schemaVersion", "1.0").put("routines", "아침마다 달리기");
+        userMemory.putObject("customAttributes");
+        when(timelineAiTaskInputService.getInput(anyString(), eq("t-1"), eq("tok-1")))
+                .thenReturn(inputResponse(userMemory));
+
+        mockMvc.perform(get(INPUT).header("Task-Token", "tok-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userMemory.schemaVersion").value("1.0"))
+                .andExpect(jsonPath("$.userMemory.routines").value("아침마다 달리기"))
+                .andExpect(jsonPath("$.userMemory.customAttributes").isMap());
+    }
+
+    @Test
+    void inputWithoutUserMemorySerializesExplicitNull() throws Exception {
+        when(timelineAiTaskInputService.getInput(anyString(), eq("t-1"), eq("tok-1")))
+                .thenReturn(inputResponse(null));
+
+        mockMvc.perform(get(INPUT).header("Task-Token", "tok-1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userMemory").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.sourceItems[0].rawId").value("raw-1"));
     }
 
     @Test
