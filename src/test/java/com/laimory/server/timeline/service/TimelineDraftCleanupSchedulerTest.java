@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.payload.PhotoPayload;
@@ -73,7 +74,7 @@ class TimelineDraftCleanupSchedulerTest {
     void fullBatchIsSelectedOnlyOncePerSlotAndCanRetryNextRun() {
         var configured = new TimelineDraftCleanupWorkerProperties(true, 7, 1, 1, 2, 2);
         var worker = new TimelineDraftCleanupScheduler(timelineDraftSourceItemService, s3PhotoStorageService,
-                new ObjectMapper(), FIXED, configured, Runnable::run);
+                FIXED, configured, Runnable::run);
         when(timelineDraftSourceItemService.findExpired(any(), org.mockito.ArgumentMatchers.eq(2),
                 org.mockito.ArgumentMatchers.eq(4), org.mockito.ArgumentMatchers.eq(1)))
                 .thenReturn(List.of(stayRow(30L)));
@@ -155,6 +156,26 @@ class TimelineDraftCleanupSchedulerTest {
     }
 
     @Test
+    void photoRowWithMixedPlaceShapesIsDeletedFromS3() {
+        // 저장본 places는 문자열 원소(옛 행)와 객체 원소가 섞여 있다(#620). 두 형태 모두 S3 삭제 대상이 된다.
+        TimelineDraftSourceItem photo = photoRow(50L, FILENAME);
+        ((ObjectNode) photo.getPayload()).putArray("places")
+                .add("옛 장소")
+                .add(MAPPER.createObjectNode().put("name", "새 장소").put("latitude", 37.5).put("longitude", 127.0));
+        when(timelineDraftSourceItemService.findExpired(any(), org.mockito.ArgumentMatchers.eq(0), org.mockito.ArgumentMatchers.eq(2), org.mockito.ArgumentMatchers.eq(250)))
+                .thenReturn(List.of(photo));
+        String objectKey = PhotoObjectKeys.subjectFullKey(FILENAME, SUBJECT_ID);
+        when(s3PhotoStorageService.deleteAll(List.of(objectKey)))
+                .thenReturn(result(Set.of(objectKey), Map.of(), Set.of()));
+        when(timelineDraftSourceItemService.deleteExpired(Set.of(50L))).thenReturn(1);
+
+        scheduler().cleanupExpiredDrafts();
+
+        verify(s3PhotoStorageService).deleteAll(List.of(objectKey));
+        verify(timelineDraftSourceItemService).deleteExpired(Set.of(50L));
+    }
+
+    @Test
     void cleanup_malformedOrBlankPhotosPreserveExistingOrphanPolicy() {
         List<TimelineDraftSourceItem> rows = List.of(
                 photoRow(40L, ""),
@@ -183,7 +204,6 @@ class TimelineDraftCleanupSchedulerTest {
         return new TimelineDraftCleanupScheduler(
                 timelineDraftSourceItemService,
                 s3PhotoStorageService,
-                MAPPER,
                 FIXED,
                 properties,
                 Runnable::run);

@@ -85,15 +85,16 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   파라미터도 별도 보안 검토한다.
 - **method+path 판정이 body parsing·크기·content-type 검사보다 먼저다.**
   `/api/v\d+/auth/(token|refresh|logout)` request는 empty·비JSON을 포함해 항상 `[masked auth body]`다.
-  사용자 사생활 원문을 담는 지정 24개 요청/응답 body(폐기된 경로 포함)는 **allowlist skeleton**으로
+  사용자 사생활 원문을 담는 지정 25개 요청/응답 body(폐기된 경로 포함)는 **allowlist skeleton**으로
   마스킹한다(#281 전체 마스킹 → #312 skeleton 전환, 약관 2개 경로는 #303, Event 수동 생성 2개는
-  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518, 앱 내 문의 조회 2개는 #529, 생성 가능 확인은 #594, 장소 지정은 #612) — request 11개(draft 생성 POST, 생성 가능 확인 POST
+  #326/#361, AI 동기 테스트는 #394, 문의 3개는 #518, 앱 내 문의 조회 2개는 #529, 생성 가능 확인은 #594, 장소 지정은 #612, AI 입력 조회는 #258) — request 11개(draft 생성 POST, 생성 가능 확인 POST
   `/a/api/v\d+/timeline/drafts/check` — payload를 받지 않지만 클라가 draft용 sourceItem을 그대로 보내면 원문이 실린다, Event PATCH, memo PUT,
   장소 지정 PUT `/a/api/v\d+/timeline/events/[^/]+/place` — 사용자가 고르거나 직접 입력한 장소명, Event 수동 생성 POST
   `/a/api/v\d+/timeline/daily-records/[^/]+/events`, AI timeline result POST, AI callback POST,
   User Memory result POST, 폐기된 AI 동기 테스트 POST `/t/api/v\d+/timeline/test`, 문의 접수 POST
   `/a/api/v\d+/inquiries` — 답장 email과 문의 원문; presign 발급 `attachment-uploads`는 메타뿐이라 제외),
-  response 13개(관리자 문의 목록 GET `/admin/api/inquiries`·상세 GET `/admin/api/inquiries/\d+` — 관리자
+  response 14개(AI 입력 조회 GET `/s/api/v\d+/timeline/drafts/[^/]+/input` — 치환본이지만 사용자 프로필 전체인
+  `userMemory`가 타임라인 생성마다 실려 구조 필드만 남기고 `userMemory`·source `payload`·`taskToken`을 마스킹한다, 관리자 문의 목록 GET `/admin/api/inquiries`·상세 GET `/admin/api/inquiries/\d+` — 관리자
   경로도 같은 access log를 타므로 email·본문·첨부 URL을 마스킹하고 ID·처리 시각만 남긴다, 앱 내 문의 목록 GET
   `/a/api/v\d+/inquiries`·상세 GET `/a/api/v\d+/inquiries/\d+` — 제목·email·내용·첨부 CDN URL(subject hash 포함)을
   마스킹하고 ID·상태·처리 시각만 남긴다(목록 wrapper `inquiries`를 allowlist에 둬 원소 구조가 남는다),
@@ -114,8 +115,7 @@ dynamic mapping 증가·타입 충돌·문서 거부를 막는다.
   장문 원문은 어떤 필드명 밑에서도 남지 않는다. `error`/`errorCode`는 숫자·null만 남긴다(폴링 numeric
   code는 유지, 콜백 자유 텍스트는 마스크 — "수신 후 폐기" 계약 유지). empty·캡처 상한 초과는 파싱
   없이, malformed·비JSON은 파싱 실패로 — 모두 고정 `[masked privacy body]`로 폴백해 형태 정보도
-  남기지 않는다. AI input 응답(`GET /s/.../input`)은 대상이 아니다 — 저장 시점에 이미
-  privacy 치환된 서버간 응답이다. 약관 동의 POST request는 원문 없이 type/version뿐이라 대상이
+  남기지 않는다. 약관 동의 POST request는 원문 없이 type/version뿐이라 대상이
   아니다. 기존 field 기반 secret 마스킹은 비대상 경로에 그대로 유지된다.
   파싱 불가 body의 형태·원문·fingerprint는 여전히 access logging 범위 밖이며
   status/errorCode/transactionId/clientIp로 조사한다. 파싱 가능한 불량 body는 #312부터 skeleton으로

@@ -59,7 +59,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    **PHOTO 좌표는 조회·상한·실패율(D1)에는 합류하지만 시간순 연속 실패(D2) 축에는 관측을 만들지 않는다** —
    사진은 시간축에 조밀하게 뭉쳐, 같은 자리에서 찍은 사진 3장이 공유하는 좌표가 한 번 실패하는 것만으로
    하루 draft 전체가 502가 되기 때문이다(임계값 3은 하루 25개 안팎이 흩어진 STAY/MOVEMENT 기준이다).
-   성공한 PHOTO 좌표의 주소·주변 장소는 payload의 `address`/`places`로 저장된다.
+   성공한 PHOTO 좌표의 주소·주변 장소는 payload의 `address`/`places`로 저장된다. `places` 원소는
+   `{name, latitude, longitude}` 객체다(#620).
 6. **DailyRecord 선생성 + source 저장 + 크레딧 차감을 한 트랜잭션으로 커밋한다**(`TimelineDraftPreparationService`):
    `(subjectId, recordDate)` find-or-create, 기존 DRAFT면 `recordAt/recordTimezone`을 이번 요청 값으로 즉시
    갱신, SAVED 재확인(throw → 전체 롤백), source rows 저장, 조건부 차감(`remaining >= 비용`) + 사용 기록
@@ -114,20 +115,25 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 ### AI input, result and callback
 
 1. **입력 조회**(`GET /s/api/{v}/timeline/drafts/{taskId}/input`, `Task-Token`): task/token/PROCESSING/
-   `INPUT_PENDING` 확인 **다음에** record·staging을 읽어 정규 입력 DTO를 만든다. 응답 조립 시 PHOTO
+   `INPUT_PENDING` 확인 **다음에** record·staging·User Memory를 읽어 정규 입력 DTO를 만든다. task owner
+   (`subjectId`)의 User Memory 문서는 제외 필드 없는 `redactTree` 치환본으로 `userMemory`에 싣고, 문서가 없으면
+   `null`이다(#258 — 버전 무관, 재발급도 같은 조립). 응답 조립 시 PHOTO
    payload의 `clientPhotoUri` 값 전체를 `[REDACTED_DEVICE_URI]` 고정 token으로 바꾼다(deep copy —
    entity·DB·앱 응답은 원문 유지). storage 예외 중 이 필드만 치환한다 — `filename`·`photoUrl`은 서버 파생
-   식별자라 AI에 원문 그대로 나간다(AI가 `photoUrl`을 HTTP GET으로 소비). 성공하면 새 token hash와
+   식별자라 AI에 원문 그대로 나간다(AI가 `photoUrl`을 HTTP GET으로 소비). `v1` 요청이면 같은 deep copy에서
+   주변 장소 목록(`places`, MOVEMENT `start/end.places`)의 객체 원소를 이름 문자열로 바꾸고, 다른 버전은 저장본
+   그대로 낸다(#620). 성공하면 새 token hash와
    `RESULT_PENDING`을 native `SET XX KEEPTTL`로 저장하고 새 token 원문을 응답 body의 `taskToken`으로
    반환한다(최초 만료 시각 보존 — write 시점 만료면 부활 없이 404). 같은 write가
    소비된 input token hash와 재시도 마감을 담은 retry receipt를 남겨, 응답 유실 뒤 같은 input token으로
    다시 오면 입력을 재조립하고 새 result token을 재발급한다(창 안에서만, receipt는 갱신하지 않는다).
 2. **결과 저장**(`POST .../result`, 입력 응답의 `Task-Token`): shape 검증 뒤·선점 전에
    Event `title`/`subtitle`/`question`/`place`/`address`와 장소 후보 이름을 255자 token-aware bounded로 v1 치환한 요청
-   사본을 만들고 이후 단계는 치환본만 본다(shape 검증: Event 좌표 쌍, subtitle `{place}`에 채울 place 존재 — #612) — 치환 실패는 선점 없이 `RESULT_PENDING` 유지로
+   사본을 만들고 이후 단계는 치환본만 본다(shape 검증: Event 좌표 쌍, 후보 좌표 쌍·범위·NaN(#620), subtitle `{place}`에 채울 place 존재 — #612) — 치환 실패는 선점 없이 `RESULT_PENDING` 유지로
    끝난다(원문 fallback 없음).
    retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 DB 검증·시각 정규화·+10분 nudge/clamp·
-   Event/Item/junction·장소 후보 INSERT(후보가 있으면 `place` = 1번 후보, #612)·채택 source DELETE를 하나의
+   Event/Item/junction·장소 후보 INSERT(후보가 있으면 `place` = 1번 후보 #612, 1번 후보에 좌표가 있으면 Event 좌표 =
+   그 좌표 #620)·채택 source DELETE를 하나의
    MySQL transaction으로 commit한다 — 저장된
    claim을 읽은 뒤늦은 same-token 재시도는 409로 transaction에 재진입하지 못한다. 같은 transaction의 마지막에
    draft 요청 때 차감한 크레딧 기록을 `CONSUMED`로 확정한다(#565 — 상태 조건 없이 마지막에 쓴 값, 기록 없는 V10 이전
@@ -337,7 +343,8 @@ record인지는 따지지 않는다 — append UX가 없어 빈 DRAFT는 재사�
 - **접수 body와 base memory 지문은 guard를 잡은 뒤 만든다.** 밀려 있는 동안 앞선 날짜의 갱신이 문서를
   바꾸므로, 미리 조립해 두면 낡은 문서를 base로 삼게 되고 미루는 것 자체가 무의미해진다.
 - 접수 body는 확정된 타임라인을 구조화한 `dailyTimelines[].events[]`다(`question`·`memo` 포함, `items[]`와
-  행 PK 제외, 시각은 record timezone offset). 접수 자체를 다시 시도하지는 않는다 — AI를 두들기는 루프가
+  행 PK 제외, 시각은 record timezone offset). Event 좌표는 접수 시점 현재 값을 싣되 `MOVEMENT`는 두 값을
+  null로 보낸다(#632). 접수 자체를 다시 시도하지는 않는다 — AI를 두들기는 루프가
   없고 circuit breaker도 두지 않는다. 재시도는 다음날 배치가 담당한다.
 - **접수 body의 텍스트는 v1 privacy 치환본이다** — base 문서(`userMemory`)는 `redactTree`, Event
   `title`/`subtitle`/`question`은 255자·`memo`는 500자 token-aware bounded 치환이다. DB에는 사용자 수정

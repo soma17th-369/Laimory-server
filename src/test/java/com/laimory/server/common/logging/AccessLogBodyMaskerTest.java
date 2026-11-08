@@ -493,6 +493,32 @@ class AccessLogBodyMaskerTest {
     }
 
     @Test
+    void aiInputResponseKeepsStructureAndMasksUserMemoryAndPayload() throws Exception {
+        // #258 입력 조회 응답에 사용자 프로필 전체(userMemory)가 실린다 — 구조 필드만 남고 원문은 붕괴한다.
+        String raw = "{\"taskId\":\"0190a1b2-0001-7000-8000-000000000009\",\"recordDate\":\"2026-07-08\","
+                + "\"recordTimeZone\":\"Asia/Seoul\",\"window\":{\"startAt\":\"2026-07-08T00:00:00+09:00\","
+                + "\"endAt\":\"2026-07-09T00:00:00+09:00\"},"
+                + "\"userMemory\":{\"basicProfile\":\"RAW_MEMORY_258_NEVER_LOG\"},"
+                + "\"sourceItems\":[{\"rawId\":\"0190a1b2-0001-7000-8000-000000000001\",\"itemType\":\"STAY\","
+                + "\"startAt\":\"2026-07-08T12:00:00+09:00\",\"endAt\":null,"
+                + "\"payload\":{\"address\":\"RAW_ADDRESS_258_NEVER_LOG\"}}],"
+                + "\"taskToken\":\"RAW_TOKEN_258_NEVER_LOG\"}";
+
+        JsonNode masked = objectMapper.readTree(
+                maskGetResponse("/s/api/v1/timeline/drafts/0190a1b2-0001-7000-8000-000000000009/input", raw));
+
+        assertThat(masked.get("taskId").asText()).isEqualTo("0190a1b2-0001-7000-8000-000000000009");
+        assertThat(masked.get("recordDate").asText()).isEqualTo("2026-07-08");
+        assertThat(masked.at("/sourceItems/0/rawId").asText()).isEqualTo("0190a1b2-0001-7000-8000-000000000001");
+        assertThat(masked.at("/sourceItems/0/itemType").asText()).isEqualTo("STAY");
+        assertThat(masked.get("userMemory").asText()).isEqualTo("***");
+        assertThat(masked.at("/sourceItems/0/payload").asText()).isEqualTo("***");
+        assertThat(masked.get("taskToken").asText()).isEqualTo("***");
+        assertThat(masked.toString()).doesNotContain(
+                "RAW_MEMORY_258_NEVER_LOG", "RAW_ADDRESS_258_NEVER_LOG", "RAW_TOKEN_258_NEVER_LOG");
+    }
+
+    @Test
     void manualEventCreatePathDoesNotCaptureOtherMethodsOrEmotionPut() {
         // 같은 날짜 계열 경로의 다른 method는 오매칭하지 않는다 — 감정 PUT body는 enum뿐이라 대상이 아니다.
         assertThat(maskRequest("PUT", "/a/api/v1/timeline/daily-records/2026-07-08/emotion",
@@ -534,12 +560,6 @@ class AccessLogBodyMaskerTest {
         String presign = maskRequest("POST", "/a/api/v1/timeline/drafts/photo-uploads",
                 "{\"filename\":\"a.jpg\",\"uploadUrl\":\"RAW_URL_281_NEVER_LOG\"}");
         assertThat(presign).contains("\"filename\":\"a.jpg\"").doesNotContain("RAW_URL_281_NEVER_LOG");
-
-        // AI input 응답은 저장 시점에 치환된 서버간 응답이라 대상 아님.
-        assertThat(masker.maskResponse(
-                new MockHttpServletRequest("GET", "/s/api/v1/timeline/drafts/task-281/input"),
-                jsonResponse(), bytes("{\"items\":[]}"), false))
-                .isEqualTo("{\"items\":[]}");
 
         // drafts 목록 GET response는 polling 단건과 달리 대상 아님.
         assertThat(masker.maskResponse(new MockHttpServletRequest("GET", "/a/api/v1/timeline/drafts"),

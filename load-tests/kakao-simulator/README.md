@@ -23,7 +23,7 @@ connection pool, pending acquire, timeout, retry, circuit breaker와 servlet wor
 
 | 순서 | 요청 | 응답에서 애플리케이션이 소비하는 값 |
 |---|---|---|
-| 1 | `GET /v2/local/geo/coord2address.json?x=<longitude>&y=<latitude>` | 도로명 주소, 지번 주소 fallback, 건물명 |
+| 1 | `GET /v2/local/geo/coord2address.json?x=<longitude>&y=<latitude>` | 도로명 주소, 지번 주소, 건물명 |
 | 2 | `GET /v2/local/search/keyword.json?query=<address>&x=<longitude>&y=<latitude>&radius=50&sort=distance` | 순서대로 non-blank `place_name` |
 
 두 요청에는 다음 header가 필요하다.
@@ -203,7 +203,7 @@ SERVER_PORT=8081 \
 coord2address 1회, keyword 1회, unmatched 0이며 주소와 장소는 다음과 같다.
 
 ```text
-address: 서울 테스트구 시뮬레이터로 251
+address: 서울 테스트구 테스트동 251
 places: Laimory 테스트빌딩, Laimory 테스트카페, Laimory 테스트식당
 ```
 

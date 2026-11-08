@@ -136,17 +136,24 @@ public class TimelineAiResultTransactionService {
             LocalDateTime startAt = resolveNonCollidingStartAt(
                     toRecordLocal(event.startAt(), recordZone), occupiedStartAts);
             LocalDateTime endAt = clampEndAt(toRecordLocal(event.endAt(), recordZone), startAt);
-            List<String> candidateNames = placeCandidateNames(event);
-            String place = candidateNames.isEmpty() ? trimToNull(event.place()) : candidateNames.get(0);
+            List<AiTimelineResultRequest.PlaceCandidate> candidates = placeCandidates(event);
+            // 1번 후보가 Event의 place가 되고, 좌표가 있으면 Event 좌표도 그 후보 좌표가 된다(#620) — 결과 저장 직후
+            // place와 마커가 같은 장소를 가리킨다. 1번 후보에 좌표가 없으면 AI Event 좌표 그대로다.
+            AiTimelineResultRequest.PlaceCandidate first = candidates.isEmpty() ? null : candidates.get(0);
+            String place = first == null ? trimToNull(event.place()) : first.name();
+            boolean firstHasCoordinates = first != null && first.latitude() != null;
             TimelineEvent savedEvent = timelineEventService.save(TimelineEvent.of(
                     dailyRecordId, event.eventType(), startAt, endAt,
                     event.title().trim(), trimToNull(event.subtitle()), trimToNull(event.question()),
-                    place, trimToNull(event.address()), event.latitude(), event.longitude()));
+                    place, trimToNull(event.address()),
+                    firstHasCoordinates ? first.latitude() : event.latitude(),
+                    firstHasCoordinates ? first.longitude() : event.longitude()));
             for (String rawId : new LinkedHashSet<>(event.sourceRawIds())) {
                 links.add(TimelineEventItem.of(savedEvent.getTimelineEventId(), itemIdsByRawId.get(rawId)));
             }
-            for (String name : candidateNames) {
-                placeCandidates.add(TimelineEventPlaceCandidate.of(savedEvent.getTimelineEventId(), name));
+            for (AiTimelineResultRequest.PlaceCandidate candidate : candidates) {
+                placeCandidates.add(TimelineEventPlaceCandidate.of(savedEvent.getTimelineEventId(),
+                        candidate.name(), candidate.latitude(), candidate.longitude()));
             }
         }
         timelineEventItemService.saveAll(links);
@@ -200,13 +207,27 @@ public class TimelineAiResultTransactionService {
             if ((event.latitude() == null) != (event.longitude() == null)) {
                 throw new IllegalArgumentException("event coordinates must be both present or both absent: index=" + i);
             }
-            List<String> candidateNames = placeCandidateNames(event);
-            if (candidateNames.stream().anyMatch(name -> name.length() > PLACE_CANDIDATE_NAME_MAX_LENGTH)) {
+            if (event.placeCandidates() != null) {
+                // 후보 좌표는 장소 지정 PUT으로 그대로 돌아오므로 사용자 입력 좌표와 같은 규칙이다(#620).
+                // 공백 이름이라 버려질 후보도 받은 그대로 검사한다.
+                for (AiTimelineResultRequest.PlaceCandidate candidate : event.placeCandidates()) {
+                    if (candidate != null) {
+                        try {
+                            TimelineEventInputRules.requireValidCoordinates(candidate.latitude(), candidate.longitude());
+                        } catch (IllegalArgumentException e) {
+                            throw new IllegalArgumentException(
+                                    "event place candidate " + e.getMessage() + ": index=" + i, e);
+                        }
+                    }
+                }
+            }
+            List<AiTimelineResultRequest.PlaceCandidate> candidates = placeCandidates(event);
+            if (candidates.stream().anyMatch(candidate -> candidate.name().length() > PLACE_CANDIDATE_NAME_MAX_LENGTH)) {
                 throw new IllegalArgumentException("event place candidate is too long: index=" + i);
             }
             // subtitle의 {place}는 저장될 place로 채워 보이므로, 채울 place가 없는 결과는 미완성 문장이다.
             if (event.subtitle() != null && event.subtitle().contains(TimelineEvent.PLACE_PLACEHOLDER)
-                    && candidateNames.isEmpty() && isBlank(event.place())) {
+                    && candidates.isEmpty() && isBlank(event.place())) {
                 throw new IllegalArgumentException("event subtitle has a place placeholder without place: index=" + i);
             }
             if (event.startAt() == null) {
@@ -225,16 +246,17 @@ public class TimelineAiResultTransactionService {
     }
 
     /**
-     * 저장할 장소 후보 이름을 우선순위 순서대로 모은다 — trim하고 null·공백 이름의 후보는 버린다(나머지 순서 유지).
+     * 저장할 장소 후보를 우선순위 순서대로 모은다 — 이름을 trim하고 null·공백 이름의 후보는 좌표째 버린다(나머지 순서 유지).
      * 필드 누락·null·빈 배열은 후보 없음이다.
      */
-    static List<String> placeCandidateNames(AiTimelineResultRequest.Event event) {
+    static List<AiTimelineResultRequest.PlaceCandidate> placeCandidates(AiTimelineResultRequest.Event event) {
         if (event.placeCandidates() == null) {
             return List.of();
         }
         return event.placeCandidates().stream()
                 .filter(candidate -> candidate != null && !isBlank(candidate.name()))
-                .map(candidate -> candidate.name().trim())
+                .map(candidate -> new AiTimelineResultRequest.PlaceCandidate(
+                        candidate.name().trim(), candidate.latitude(), candidate.longitude()))
                 .toList();
     }
 

@@ -39,9 +39,9 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 부제목 | Subtitle | 현재 구현 | 이벤트의 보조 설명이다. nullable이다. 장소 자리에 자리 표시 `{place}`를 담은 템플릿일 수 있다(#612). |
 | 장소 자리 표시 | Place Placeholder | 현재 구현 | subtitle 안의 `{place}` literal(`TimelineEvent.PLACE_PLACEHOLDER`)이다. DB·앱 응답에는 그대로 두고, 클라가 표시할 때와 User Memory 전달 DTO에서 현재 `place`로 채운다. |
 | 장소 | Place | 현재 구현 | Event당 하나의 장소명(`place`)이다. AI 결과 저장이 초기값을 채우거나(장소 후보가 있으면 1번 후보) 수동 생성이 선택 입력으로 받고, 사용자가 장소 지정 PUT으로 바꾼다. source item payload의 복수 `places`(주변 장소 목록)와 다른 개념이다. |
-| 장소 후보 | Place Candidate | 현재 구현 | 장소가 애매한 Event에 AI가 우선순위 순서로 준 후보 장소명(`timeline_event_place_candidates`, 응답 `placeCandidates[{name}]`)이다. 순서 = id 순서 = 우선순위이고 좌표가 없다. 장소를 지정해도 남으며 Event 삭제 때만 지운다. |
+| 장소 후보 | Place Candidate | 현재 구현 | 장소가 애매한 Event에 AI가 우선순위 순서로 준 후보 장소명과 그 장소의 좌표(`timeline_event_place_candidates`, 응답 `placeCandidates[{name, latitude, longitude}]`)다. 순서 = id 순서 = 우선순위다. 좌표는 선택이며 항상 쌍이다(#620). 장소를 지정해도 남으며 Event 삭제 때만 지운다. |
 | 장소 지정 | Place Assignment | 현재 구현 | `PUT .../events/{timelineEventId}/place`로 Event `place`를 바꾸는 사용자 행위다. 후보 중에서 고르거나 직접 입력할 수 있고, 지도로 고르면 좌표 쌍도 함께 바꿀 수 있다(#616). "후보 해소·선택 완료" 같은 상태는 없다. |
-| 이벤트 좌표 | Event Coordinates | 현재 구현 | Event 대표 좌표(`latitude`·`longitude`)다. AI가 준 관측 위치(이동 Event는 도착지)가 초기값이고, 사용자가 수동 생성·Event PATCH·장소 지정에서 보낸 좌표로 바뀐다(#616). 항상 쌍이다. |
+| 이벤트 좌표 | Event Coordinates | 현재 구현 | Event 대표 좌표(`latitude`·`longitude`)다. AI 결과의 1번 장소 후보 좌표, 그것이 없으면 AI가 준 관측 위치(이동 Event는 도착지)가 초기값이고(#620), 사용자가 수동 생성·Event PATCH·장소 지정에서 보낸 좌표로 바뀐다(#616). 항상 쌍이다. |
 | 질문 | Question | 현재 구현 | AI가 이벤트마다 생성해 사용자에게 되묻는 문장이다. AI 결과 저장에서만 채워지는 nullable 값(trim 후 최대 255자, 공백은 null)이며 일별·단건 조회 응답에 그대로 실린다. 사용자 편집 API와 답변 저장은 미구현이다. |
 | 메모 | Memo | 현재 구현 | 사용자가 이벤트에 남기는 텍스트다. Event PATCH에서 선택적으로 작성·수정·제거한다 — 필드 부재·null은 변경 없음, 빈 문자열·공백뿐이면 제거, 그 외는 trim 없이 원문 저장(최대 500자 — User Memory 갱신 접수 계약의 상한). PUT memo endpoint는 다른 필드 없이 memo만 교체하며, 필드 부재·null·blank 모두 제거라는 점이 PATCH와 다르다. 두 편집 API 모두 성공 시 `body=null`을 반환한다. |
 | 이벤트 시작 시각 | Start At | 현재 구현 | 이벤트 시간 범위의 시작이다. 필수이며 읽을 때 정렬 기준이다. |
@@ -79,8 +79,9 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 이동 페이로드 | Movement Payload | 현재 구현 | `start`/`end` endpoint, `transports`, `distanceMeters`를 담는다. |
 | 이동 끝점 | Movement Endpoint | 현재 구현 | 출발·도착의 필수 좌표와 서버 파생 주소·주변 장소를 담는 중첩 값이다. |
 | 이동수단 | transports | 현재 구현 | 단일 문자열 이동수단 분류다. |
-| 주소 | address | 현재 구현 | 서버가 reverse geocoding한 nullable 주소다. 도로명 우선, 없으면 지번이며 client 값은 무시한다. JSON key 생략(NON_NULL)은 noop 미연동, 정상 조회했으나 주소 부재, 허용된 지오코딩 실패 좌표 세 경우 모두 가능하다 — wire에 실패 marker는 없고 내부 구분은 서버 outcome/metric이 담당한다. |
-| 주변 장소 목록 | places | 현재 구현 | 거리순 장소명 배열이다. NULL은 noop으로 JSON key 생략, 빈 배열은 정상 조회했으나 장소 없음 또는 허용된 지오코딩 실패 좌표다(wire 구분 없음). client 값은 무시한다. |
+| 주소 | address | 현재 구현 | 서버가 reverse geocoding한 nullable 주소다. 지번 우선, 없으면 도로명이며 client 값은 무시한다(#627). #627 전 저장본은 도로명 우선이라 두 형식이 공존한다. JSON key 생략(NON_NULL)은 noop 미연동, 정상 조회했으나 주소 부재, 허용된 지오코딩 실패 좌표 세 경우 모두 가능하다 — wire에 실패 marker는 없고 내부 구분은 서버 outcome/metric이 담당한다. |
+| 주변 장소 목록 | places | 현재 구현 | 거리순 주변 장소(`NearbyPlace` — `{name, latitude, longitude}`, 좌표 필수) 배열이다(#620). 저장본에는 #620 이전에 저장된 이름 문자열 원소가 남아 있다. NULL은 noop으로 JSON key 생략, 빈 배열은 정상 조회했으나 장소 없음 또는 허용된 지오코딩 실패 좌표다(wire 구분 없음). client 값은 무시한다. |
+| 주변 장소 | Nearby Place | 현재 구현 | 주변 장소 목록의 원소(`NearbyPlace`)다. 이름과 그 장소의 좌표를 갖는다 — keyword 검색 장소는 카카오 장소 좌표, 건물명은 조회한 관측 좌표다. Event의 장소 후보와 다른 개념이다. |
 | 머문 시간 텍스트 | durationText | 현재 구현 | 서버가 `startAt/endAt`으로 계산한 텍스트다. client 값은 받지 않는다. |
 | 건강 페이로드 | Health Payload | 현재 구현 | 걸음 수 지표와 단위 포함 text `value`를 담는다. 측정 구간은 item envelope에 있다. |
 | 건강 지표 | Health Metric | 현재 구현 | 신규 입력은 걸음 수 `STEPS` 하나만 허용한다. 기존 staging/final payload는 `JsonNode`로 읽으므로 과거 JSON 조회에는 enum 역직렬화를 요구하지 않는다. |
@@ -101,7 +102,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 한글명 | 영문명 | 상태 | 설명 |
 |---|---|---|---|
 | AI 접수 요청 | AI Dispatch Request | 현재 구현 | `POST /v1/timeline` body(`taskId`·`taskToken`·`dailyRecordId`·offset `window`)다. source item은 싣지 않고 AI가 토큰으로 입력 조회 API를 호출한다. 필드명은 AI 규격이 명명 권위인 contract fixture다. |
-| AI 작업 입력 | AI Task Input | 현재 구현 | 서버가 소유하는 정규 AI 입력이다(`GET /s/api/{v}/timeline/drafts/{taskId}/input`). 기록 날짜·timezone·타임라인 윈도우·source item을 담고 DB 식별자와 사용자 ID는 노출하지 않으며, 시각은 record timezone offset ISO-8601이다. |
+| AI 작업 입력 | AI Task Input | 현재 구현 | 서버가 소유하는 정규 AI 입력이다(`GET /s/api/{v}/timeline/drafts/{taskId}/input`). 기록 날짜·timezone·타임라인 윈도우·source item과 task owner의 User Memory(치환본, 없으면 null)를 담고 DB 식별자와 사용자 ID는 노출하지 않으며, 시각은 record timezone offset ISO-8601이다. |
 | AI 생성 결과 | AI Result | 현재 구현 | AI가 만든 Event, Event별 nullable 질문·장소(`place`)·주소(`address`)·대표 좌표·장소 후보와 각 Event가 채택한 `rawId` 목록이다(`POST .../result`). `place`는 AI가 Event 단위로 고른 단수 장소명이라 source item payload의 복수 `places`와 이름·의미가 다르다. 서버가 검증·정규화해 Event/Item/junction으로 저장하고 채택 source를 삭제한다. confidence·추론 설명 등 저장하지 않는 출력은 계약에 없다. |
 
 ## 비동기 작성 작업

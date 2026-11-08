@@ -126,6 +126,11 @@ Task-Token: <taskToken>
 
 - `taskId`, `taskToken`(결과 저장용 다음 token), `recordDate`, `recordTimeZone`
 - `window.startAt`/`endAt`
+- `userMemory`(#258): task owner의 User Memory 문서 전체를 JSON 객체로 싣는다(문자열로 감싸지 않는다). 문서가
+  없으면 `null`이다(key 생략 없음). 서버는 구조를 해석·검증하지 않고 textual leaf만 제외 필드 없이 `redactTree`로
+  치환한다(§6 접수 body와 같은 규칙 — 저장본은 결과 저장 때 이미 치환돼 대개 그대로다). 스키마 검증은 AI 몫이다 —
+  AI는 v1.0 계약(고정 최상위 필드, `schemaVersion` `"1.0"`, 자연어 필드·`customAttributes` 값 500자)을 어긴
+  문서를 `1106`으로 기록하고 메모리 없이 생성하며 task는 실패하지 않는다. 버전과 무관하다.
 - `sourceItems[]`: `rawId`, `itemType`, 필수 `startAt`·nullable `endAt`, `payload` —
   `startAt` 필수는 draft 입력 경계(400)가 보장하며 AI 입력 계약(`CollectedSourceItem`)과 정렬된다.
   `itemType=HEALTH`의 `payload.metric`은 걸음 수 `STEPS`만 들어오며 다른 literal은 draft HTTP 입력
@@ -136,6 +141,9 @@ Task-Token: <taskToken>
   식별자라 staging 치환과 응답 조립 모두에서 제외돼 **원문 그대로 전달된다** — AI가 `photoUrl`을 HTTP
   GET으로 소비하므로 원문이어야 한다.
   PHOTO payload도 좌표를 가지면 STAY/MOVEMENT와 같은 `address`·`places`를 갖는다(서버 지오코딩 enrich).
+  `address`는 지번주소 우선, 없으면 도로명주소다(#627). 형식을 구분하는 필드는 없고 배포 전 staging 행은
+  도로명일 수 있다. 같은 저장본이 최종 Item payload로 승격되고 AI가 이 값을 결과 `address`로 돌려주면 Event
+  주소가 되므로, 앱 응답의 주소도 신규 draft부터 같은 형식이다.
   좌표가 없는 PHOTO와 Event PATCH·Event 생성 POST로 수동 추가된 PHOTO에는 두 필드가 없다 — 수동
   추가는 enrich 경로를 타지 않는다.
   지오코딩이 허용 범위에서 부분 실패한 payload는 `address` key가 생략되고
@@ -145,9 +153,20 @@ Task-Token: <taskToken>
 
 `userId`·`dailyRecordId`·행 PK는 응답하지 않는다.
 
+`{version}`은 응답의 주변 장소 목록(STAY·PHOTO `places`, MOVEMENT `start.places`·`end.places`) 형태만
+가른다(#620). 나머지 필드·처리 규칙은 버전과 무관하고, 결과 저장·callback은 버전을 가르지 않는다.
+
+- `v1`: 이름 문자열 배열 `["모수 성수", ...]`을 보장한다. 저장본 원소가 객체면 `name`으로 바꾸고, 이미
+  문자열(옛 행)이면 그대로 둔다. 현재 AI는 `places`를 `list[str]`로 검증해 통과 못 한 아이템을 오류 없이
+  버리므로 `v1`에 객체가 섞이면 안 된다.
+- `v1`이 아닌 버전(`v2`): 저장본 그대로 `[{"name":"모수 성수","latitude":37.5447,"longitude":127.0561}, ...]`를
+  낸다. 원소에는 세 필드가 항상 있다(건물명은 관측 좌표). 원소를 정규화하지 않으므로 옛 행 출신 원소는
+  문자열일 수 있다 — AI는 그 환경의 서버 배포 완료 뒤에 `v2`로 바꾸고, 서버는 이를 보정하지 않는다.
+- 재시도 재발급도 같은 조립을 타므로 요청 버전 규칙을 그대로 따른다.
+
 처리 규칙:
 
-- token·PROCESSING·stage 검증을 개인 데이터 조회보다 먼저 한다.
+- token·PROCESSING·stage 검증을 개인 데이터(record·source·User Memory) 조회보다 먼저 한다.
 - 신규 조회는 `INPUT_PENDING`에서만 허용한다.
 - 응답 조립 뒤 새 token hash와 `RESULT_PENDING`을 한 native write로 저장하고 새 token 원문을 응답한다.
   같은 write가 소비된 input token hash와 재시도 마감을 담은 retry receipt를 남긴다.
@@ -170,7 +189,7 @@ Task-Token: <taskToken>
             "startAt":"...","endAt":null,"sourceRawIds":["..."],
             "question":"...","place":"성수동 카페","address":"서울특별시 성동구 ...",
             "latitude":37.5445,"longitude":127.0559,
-            "placeCandidates":[{"name":"성수동 카페"},{"name":"△△공원"}]}]}
+            "placeCandidates":[{"name":"성수동 카페","latitude":37.5447,"longitude":127.0561},{"name":"△△공원"}]}]}
 ```
 
 - 성공 응답은 `{"taskToken":"..."}`이며 이 token을 callback에 사용한다. **신규 저장과 재시도가 같은
@@ -186,19 +205,27 @@ Task-Token: <taskToken>
   배포보다 AI가 먼저 보내면 미지 필드로 무시돼 400이 아니라 값만 유실된다.
 - 장소 후보와 대표 좌표(#612)도 선택 필드다. `title`에는 장소를 넣지 않고, `subtitle`의 장소 자리에는
   자리 표시 `{place}`를 쓴다 — 서버는 템플릿 그대로 저장·응답하고 클라가 표시할 때 현재 `place`로 채운다.
-  - `placeCandidates[{name}]`: 장소가 애매한 Event의 후보 이름, **배열 순서 = 우선순위**. 누락·`null`·`[]`은
-    후보 없음이고, trim 후 공백인 이름의 후보는 버린다(나머지 순서 유지). 이름은 trim 후 255자다.
+  - `placeCandidates[{name, latitude?, longitude?}]`: 장소가 애매한 Event의 후보, **배열 순서 = 우선순위**.
+    누락·`null`·`[]`은 후보 없음이고, trim 후 공백인 이름의 후보는 좌표째 버린다(나머지 순서 유지). 이름은
+    trim 후 255자다.
+  - 후보 좌표(#620)는 그 후보 장소의 위치이며 선택이다. 장소 지정 PUT 입력과 같은 규칙으로 검사한다 — 쌍,
+    위도 -90~90·경도 -180~180(경계 허용), NaN 거절. 위반하면 결과 batch 400이며, 이름이 공백이라 버려질
+    후보도 받은 그대로 검사한다. 저장된 후보 좌표는 앱이 후보를 고를 때 장소 지정 PUT으로 그대로 돌아오므로
+    같은 규칙이어야 서버가 저장한 후보를 서버가 거절하지 않는다.
   - 후보가 1개 이상이면 서버가 `place`를 **1번 후보 이름(치환 후 값)으로 덮어써** 저장한다 — AI `place`가
     다르거나 null이어도 비교 없이 덮어쓴다. 후보가 없으면 AI `place` 그대로다. 후보 개수는 검증하지 않는다.
   - `subtitle`에 `{place}`가 있는데 저장될 `place`가 없으면(후보 0개 + AI `place` 누락·공백) 결과 batch 400.
-  - `latitude`·`longitude`: Event 대표 좌표 = 사용자가 실제로 있던 관측 위치(이동 Event는 도착지)라 장소를
-    바꿔도 변하지 않는다. 둘 다 보내거나 둘 다 생략하며 한쪽만이면 결과 batch 400. 범위는 검증하지 않는다.
-    후보에는 좌표가 없다.
+  - `latitude`·`longitude`: Event 대표 좌표 = 사용자가 실제로 있던 관측 위치(이동 Event는 도착지). 둘 다
+    보내거나 둘 다 생략하며 한쪽만이면 결과 batch 400. 범위는 검증하지 않는다.
+  - 1번 후보(공백 이름을 버린 뒤의 첫 후보)에 좌표가 있으면 서버가 Event 좌표를 **그 후보 좌표로 덮어써**
+    저장한다(#620) — `place` 덮어쓰기와 같은 방식이라 저장 직후 `place`와 좌표가 같은 장소를 가리킨다. 1번
+    후보에 좌표가 없으면 AI Event 좌표 그대로이고, 2번 이하 후보의 좌표는 쓰지 않는다. 덮어쓴 Event에는 AI
+    관측 좌표가 남지 않는다.
   - 서버 배포 전에 AI가 먼저 보내면 미지 필드로 무시돼 좌표·후보가 유실되고 `place` 덮어쓰기도 없다.
     `{place}` 전송은 그 환경의 서버 롤링 배포 완료 + Android 강제 업데이트 뒤에 시작한다(구버전 앱은
     `{place}`를 그대로 보인다).
 - 저장 전에 서버가 Event `title`/`subtitle`/`question`/`place`/`address`와 후보 이름을 255자 token-aware bounded로
-  v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변). 치환은 shape 검증 뒤·선점
+  v1 치환한 요청 사본을 만들어 그 치환본만 저장한다(wire DTO 필드 집합 불변, 후보 좌표는 그대로). 치환은 shape 검증 뒤·선점
   전이라 실패하면 선점 없이 `RESULT_PENDING` 유지로 끝난다(원문 fallback 없음).
 - retry receipt에 선점 표식(`claimedAt`)을 심는 native write로 선점한 뒤 MySQL transaction을 실행한다.
   **선점은 token을 바꾸지 않는다** — 저장이 실패해도 AI가 쥔 token이 그대로라 재요청이 특수 경로 없이
@@ -228,7 +255,7 @@ Task-Token: <taskToken>
 - `eventType`, non-blank `title`, `startAt`, `endAt >= startAt`, DB 문자열 길이
   (`title`·`subtitle`·`question`·`place`·`address`·후보 이름 각각 trim 후 255자 — 한 Event의 초과가 결과 batch
   전체를 400으로 만든다)
-- Event 좌표 쌍(한쪽만 400), `subtitle`의 `{place}`에 채울 `place` 존재
+- Event 좌표 쌍(한쪽만 400), 후보 좌표 쌍·범위·NaN, `subtitle`의 `{place}`에 채울 `place` 존재
 - 모든 `sourceRawId`가 이 task staging source에 존재
 - 같은 record final graph에 채택 rawId가 아직 없음
 
@@ -284,7 +311,7 @@ POST {base-url}/v1/user-memory
     "events": [{
       "eventType": "MEAL", "title": "...", "subtitle": "...", "question": "...",
       "startAt": "2026-08-04T12:10:00+09:00", "endAt": "2026-08-04T13:00:00+09:00",
-      "memo": "..."
+      "memo": "...", "latitude": 37.5445, "longitude": 127.0559
     }]
   }]
 }
@@ -295,15 +322,22 @@ POST {base-url}/v1/user-memory
   확정된 타임라인을 그대로 옮긴 `dailyTimelines[]`로 합의했다(2026-08-06).
 - **이름·필드 구성은 형제 계약을 따른다**: 하루 식별은 입력 조회 응답과 같은 `recordDate`/`recordTimeZone`,
   Event는 공통 6개(`eventType`·`title`·`subtitle`·`question`·`startAt`·`endAt`)를 같은 순서로 두고
-  흐름별 추가 필드 하나를 끝에 붙인다 — 결과 저장은 `sourceRawIds`, 여기는 `memo`다.
+  흐름별 추가 필드를 끝에 붙인다 — 결과 저장은 `sourceRawIds`, 여기는 `memo`와 좌표(`latitude`·`longitude`)다.
 - `question`(우리 타임라인 AI가 쓴 문장)과 `memo`(그에 대한 사용자의 답)를 함께 보낸다 — 둘을 나누면
   `"응 좋았어"` 같은 memo가 맥락을 잃는다. `memo` 상한은 AI 규격에 맞춰 500자다.
 - 접수 body의 텍스트는 v1 privacy 치환본이다 — base 문서(`userMemory`)는 `redactTree`, Event
   `title`/`subtitle`/`question`은 255자·`memo`는 500자 token-aware bounded 치환이라 값에 `[REDACTED_*]`
   token literal이 섞일 수 있다(필드 집합·구조 불변). `subtitle`의 `{place}`는 치환 전에 Event의 현재 `place`로
-  채워 완성 문장으로 보낸다(`place`가 null이면 그대로 — #612). 좌표·장소 후보·`place` 필드는 싣지 않는다.
+  채워 완성 문장으로 보낸다(`place`가 null이면 그대로 — #612). 장소 후보·`place` 필드는 싣지 않는다.
   DB에는 사용자 원문(템플릿)이 남고 AI 전달에서만 치환하며,
   결과 대조용 base 문서 지문은 접수 body의 치환본이 아니라 DB 원본 문서로 계산한다.
+- Event `latitude`·`longitude`(#632)는 접수 시점 Event의 현재 대표 좌표다. 키는 항상 싣고 값은 JSON number 또는
+  null이며 둘은 함께 null이거나 함께 값이다. `MOVEMENT` Event는 이벤트 자체는 싣되 DB 좌표 유무와 무관하게
+  두 값을 null로 보내고(DB 좌표는 바꾸지 않는다), 그 외 Event는 좌표가 없을 때만 null이다. 좌표는 privacy
+  치환 대상이 아니며 서버는 좌표 추정·지오코딩을 하지 않는다.
+- 알려진 미구현(AI 측): AI 수신 스키마 `DailyTimelineEvent`에 좌표 필드가 없고 `_project_event` 프롬프트
+  투영도 좌표를 고르지 않는다. 미지 필드는 pydantic 기본값으로 무시되어 접수는 깨지지 않지만, AI 스키마·투영을
+  동기화하기 전까지 좌표는 갱신에 쓰이지 않는다.
 - `items[]`(사진 등)와 행 PK(`timelineEventId`·`dailyRecordId`·`userId`)는 싣지 않는다(입력 조회 응답과
   같은 규칙 — 상관관계는 `taskId`).
 - `dailyTimelines`는 **여러 건일 수 있고 `recordDate` 오름차순이다** — 접수는 하루 1회 배치가 전담하고,
@@ -378,7 +412,7 @@ Task-Token: <접수 body로 준 token>
 
 - `noop`: dispatch하지 않아 PROCESSING task가 처리 기한에 유실 처리로 FAILED가 된다.
 - `fake`: 응답마다 받은 다음 task token으로 자기 서버의 입력 → 결과 → callback endpoint를 실제 HTTP 호출한다.
-  결과는 `{place}` subtitle과 장소 후보 2개를 싣고 좌표는 보내지 않는다(추론 없음).
+  입력은 `v1`로 조회하고, 결과는 `{place}` subtitle과 장소 후보 2개를 싣고 좌표는 보내지 않는다(추론 없음).
 - `http`: 실 AI 연동. 접수 timeout과 응답 계약을 검증한다.
 - `agentcore`: 실 AI 연동. 같은 접수 body를 공통 wrapper로 감싸 AgentCore Runtime에
   `InvokeAgentRuntime`으로 접수시킨다(§1a).
@@ -411,7 +445,7 @@ timeout이 소유한다.
 - 결과 graph와 채택 source 삭제는 하나의 MySQL transaction이다.
 - callback body에 graph를 추가하지 않는다.
 - 실제 token 값을 문서·로그에 기록하지 않는다.
-- 서버→AI로 나가는 텍스트 값(입력 조회 payload, User Memory 접수 body)은 v1 privacy 치환본이며
+- 서버→AI로 나가는 텍스트 값(입력 조회 payload·`userMemory`, User Memory 접수 body)은 v1 privacy 치환본이며
   `[REDACTED_*]` token literal을 포함할 수 있다 — 치환은 값만 바꾸고 wire DTO 필드 집합은 불변이다.
 
 ## Known Gaps

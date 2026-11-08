@@ -156,7 +156,8 @@ public class FakeTimelineAiDispatcher implements TimelineAiDispatcher {
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.UNKNOWN, FAKE_TITLE, FAKE_SUBTITLE, FAKE_QUESTION, FAKE_PLACE, FAKE_ADDRESS,
                 null, null,
-                FAKE_PLACE_CANDIDATES.stream().map(AiTimelineResultRequest.PlaceCandidate::new).toList(),
+                FAKE_PLACE_CANDIDATES.stream()
+                        .map(name -> new AiTimelineResultRequest.PlaceCandidate(name, null, null)).toList(),
                 startAt, endAt,
                 sources.stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
     }

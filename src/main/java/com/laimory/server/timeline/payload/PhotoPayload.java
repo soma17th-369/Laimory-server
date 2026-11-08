@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.payload;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.laimory.server.geo.NearbyPlace;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 
@@ -43,8 +44,8 @@ public record PhotoPayload(
         String description,
         @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "서버 지오코딩 enrich — 요청 시 무시됨")
         String address,
-        @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "서버 지오코딩 enrich(주변 장소명, 거리순) — 요청 시 무시됨")
-        List<String> places,
+        @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "서버 지오코딩 enrich(주변 장소 이름·좌표, 거리순) — 요청 시 무시됨")
+        List<NearbyPlace> places,
         @Schema(accessMode = Schema.AccessMode.READ_ONLY, description = "서버 파생(CloudFront 서빙 URL) — 요청 시 무시됨")
         String photoUrl
 ) implements TimelineItemPayload {

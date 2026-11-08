@@ -130,7 +130,7 @@ class TimelineSoftDeleteIntegrationTest {
                                 "{place}에서 점심", null, candidateNames[0], "서울시 성동구", 37.5445, 127.0559))
                 .getTimelineEventId();
         for (String name : candidateNames) {
-            timelineEventPlaceCandidateRepository.save(TimelineEventPlaceCandidate.of(eventId, name));
+            timelineEventPlaceCandidateRepository.save(TimelineEventPlaceCandidate.of(eventId, name, null, null));
         }
         return eventId;
     }

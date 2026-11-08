@@ -451,3 +451,19 @@ mysql flyway_place_candidates_upgrade -e "DELETE FROM daily_records WHERE subjec
 [ "$(mysql flyway_place_candidates_upgrade -e "SELECT COUNT(*) FROM timeline_event_place_candidates")" = 0 ] || fail 'deleting the record did not cascade to place candidates'
 flyway flyway_place_candidates_upgrade "$MIGRATIONS" -target=14 validate >"$WORK/place-candidates-validate.log" 2>&1
 ok 'V13 to V14 adds nullable event coordinates and place candidates with event FK CASCADE, keeping existing events'
+
+# V14→V15(#620): 장소 후보 좌표 2컬럼(nullable) 추가. 기존 후보 보존·좌표 NULL을 확인한다.
+mysql -e 'CREATE DATABASE flyway_candidate_coordinates_upgrade;'
+flyway flyway_candidate_coordinates_upgrade "$MIGRATIONS" -target=14 migrate >"$WORK/candidate-coordinates-v14.log" 2>&1
+COORD_SUBJECT='00000000-0000-4000-8000-000000000004'
+mysql flyway_candidate_coordinates_upgrade -e "INSERT INTO user_subject_links (user_lookup_key, subject_id, lookup_key_version) VALUES (UNHEX(REPEAT('ee', 32)), '$COORD_SUBJECT', 1); INSERT INTO daily_records (subject_id, record_date, record_at, record_timezone, status, created_at, updated_at) VALUES ('$COORD_SUBJECT', '2026-01-06', '2026-01-06 10:00:00', 'Asia/Seoul', 'SAVED', NOW(6), NOW(6))"
+mysql flyway_candidate_coordinates_upgrade -e "INSERT INTO timeline_events (daily_record_id, start_at, title, place, created_at, updated_at) SELECT daily_record_id, '2026-01-06 12:00:00', 'kept', '성수 카페', NOW(6), NOW(6) FROM daily_records"
+mysql flyway_candidate_coordinates_upgrade -e "INSERT INTO timeline_event_place_candidates $CANDIDATE_COLUMNS SELECT timeline_event_id, '성수 카페', NOW(6), NOW(6) FROM timeline_events"
+mysql flyway_candidate_coordinates_upgrade -e 'SELECT timeline_event_place_candidate_id, timeline_event_id, name FROM timeline_event_place_candidates ORDER BY timeline_event_place_candidate_id' >"$WORK/candidate-coordinates-before.tsv"
+flyway flyway_candidate_coordinates_upgrade "$MIGRATIONS" -target=15 migrate >"$WORK/candidate-coordinates-v15.log" 2>&1
+mysql flyway_candidate_coordinates_upgrade -e 'SELECT timeline_event_place_candidate_id, timeline_event_id, name FROM timeline_event_place_candidates ORDER BY timeline_event_place_candidate_id' >"$WORK/candidate-coordinates-after.tsv"
+cmp -s "$WORK/candidate-coordinates-before.tsv" "$WORK/candidate-coordinates-after.tsv" || fail 'V15 changed existing place candidate rows'
+[ "$(mysql flyway_candidate_coordinates_upgrade -e "SELECT COUNT(*) FROM timeline_event_place_candidates WHERE latitude IS NULL AND longitude IS NULL")" = 1 ] || fail 'V15 did not leave existing candidate coordinates NULL'
+[ "$(mysql flyway_candidate_coordinates_upgrade -e "SELECT GROUP_CONCAT(CONCAT(COLUMN_NAME, ':', DATA_TYPE, ':', IS_NULLABLE) ORDER BY COLUMN_NAME) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'timeline_event_place_candidates' AND COLUMN_NAME IN ('latitude', 'longitude')")" = 'latitude:double:YES,longitude:double:YES' ] || fail 'V15 candidate coordinate columns are not nullable DOUBLE'
+flyway flyway_candidate_coordinates_upgrade "$MIGRATIONS" -target=15 validate >"$WORK/candidate-coordinates-validate.log" 2>&1
+ok 'V14 to V15 adds nullable place candidate coordinates, keeping existing candidates'

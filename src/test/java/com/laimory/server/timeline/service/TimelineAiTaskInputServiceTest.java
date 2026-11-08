@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
+import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.common.privacy.RedactionType;
 import com.laimory.server.testsupport.TimelineDraftTaskFixtures;
 import com.laimory.server.timeline.ItemType;
@@ -23,6 +24,7 @@ import com.laimory.server.timeline.dto.AiTimelineTaskInputResponse;
 import com.laimory.server.timeline.entity.DailyRecord;
 import com.laimory.server.timeline.entity.TimelineDraftSourceItem;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
+import com.laimory.server.user.service.UserMemoryService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -49,16 +51,20 @@ class TimelineAiTaskInputServiceTest {
     private DailyRecordService dailyRecordService;
     @Mock
     private TimelineDraftSourceItemService timelineDraftSourceItemService;
+    @Mock
+    private UserMemoryService userMemoryService;
 
     private static final Instant NOW = Instant.parse("2026-06-17T03:10:00Z");
     private static final Duration RETRY_WINDOW = Duration.ofSeconds(15);
+    private static final String PHONE = "010-1234-5678";
 
     private TimelineAiTaskInputService service;
 
     @BeforeEach
     void setUp() {
         service = new TimelineAiTaskInputService(timelineTaskService, dailyRecordService,
-                timelineDraftSourceItemService, Clock.fixed(NOW, ZoneOffset.UTC), RETRY_WINDOW);
+                timelineDraftSourceItemService, userMemoryService, new PrivacyRedactor(),
+                Clock.fixed(NOW, ZoneOffset.UTC), RETRY_WINDOW);
     }
 
     private static final String VERSION = "v1";
@@ -116,6 +122,43 @@ class TimelineAiTaskInputServiceTest {
     }
 
     @Test
+    void inputCarriesTaskOwnersUserMemoryWithTextualLeavesRedacted() {
+        TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        givenRecordAndSources();
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+        ObjectNode storedMemory = new ObjectMapper().createObjectNode()
+                .put("schemaVersion", "1.0")
+                .put("basicProfile", "비상 연락처는 " + PHONE)
+                .put("routines", "아침마다 달리기");
+        storedMemory.putObject("customAttributes").put("pet", "고양이");
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.of(storedMemory));
+
+        AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
+
+        assertThat(response.userMemory().toString()).isEqualTo(
+                "{\"schemaVersion\":\"1.0\",\"basicProfile\":\"비상 연락처는 [REDACTED_PHONE]\","
+                        + "\"routines\":\"아침마다 달리기\",\"customAttributes\":{\"pet\":\"고양이\"}}");
+        // 저장 문서 원본은 미변형(치환은 새 tree에만).
+        assertThat(storedMemory.get("basicProfile").textValue()).isEqualTo("비상 연락처는 " + PHONE);
+    }
+
+    @Test
+    void inputWithoutUserMemoryReturnsNullMemoryAndSameSources() {
+        TimelineDraftTask task = taskAt(ProcessStage.INPUT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        givenRecordAndSources();
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+
+        AiTimelineTaskInputResponse response = service.getInput(VERSION, TASK_ID, TASK_TOKEN);
+
+        assertThat(response.userMemory()).isNull();
+        assertThat(response.sourceItems()).extracting(AiTimelineTaskInputResponse.SourceItem::rawId)
+                .containsExactly("raw-1", "raw-2");
+    }
+
+    @Test
     void getInput_replacesClientPhotoUriWithToken_withoutMutatingStoredPayload() {
         // storage payload는 이미 v1 치환 저장본 — projection은 storage 예외였던 clientPhotoUri만
         // 고정 token으로 바꾼다. 엔티티 payload(Hibernate 관리 필드)는 변형되지 않아야 한다.
@@ -166,6 +209,90 @@ class TimelineAiTaskInputServiceTest {
     }
 
     @Test
+    void v1InputReturnsNearbyPlacesAsNamesWithoutMutatingStoredPayload() {
+        // 저장본 places 원소는 객체(#620)이거나 옛 행의 이름 문자열이다. v1 AI는 문자열만 받으므로 이름만 낸다.
+        List<TimelineDraftSourceItem> sources = placeSources();
+        givenInputPendingTaskWithSources(sources);
+
+        AiTimelineTaskInputResponse response = service.getInput("v1", TASK_ID, TASK_TOKEN);
+
+        List<JsonNode> payloads = response.sourceItems().stream()
+                .map(AiTimelineTaskInputResponse.SourceItem::payload).toList();
+        assertThat(payloads.get(0).get("places").toString()).isEqualTo("[\"모수 성수\",\"옛 장소\"]");
+        assertThat(payloads.get(1).get("places").toString()).isEqualTo("[\"성수역\"]");
+        assertThat(payloads.get(1).get("clientPhotoUri").textValue()).isEqualTo(RedactionType.DEVICE_URI.token());
+        assertThat(payloads.get(2).get("start").get("places").toString()).isEqualTo("[\"강남역\"]");
+        assertThat(payloads.get(2).get("end").get("places").toString()).isEqualTo("[\"선릉역\"]");
+        // 저장 payload 원본은 미변형(deep copy 뒤 변환).
+        assertThat(sources.get(0).getPayload().get("places").get(0).get("name").textValue()).isEqualTo("모수 성수");
+    }
+
+    @Test
+    void v2InputReturnsStoredNearbyPlacesAsIs() {
+        givenInputPendingTaskWithSources(placeSources());
+
+        AiTimelineTaskInputResponse response = service.getInput("v2", TASK_ID, TASK_TOKEN);
+
+        List<JsonNode> payloads = response.sourceItems().stream()
+                .map(AiTimelineTaskInputResponse.SourceItem::payload).toList();
+        assertThat(payloads.get(0).get("places").toString()).isEqualTo(
+                "[{\"name\":\"모수 성수\",\"latitude\":37.5447,\"longitude\":127.0561},\"옛 장소\"]");
+        assertThat(payloads.get(2).get("start").get("places").toString()).isEqualTo(
+                "[{\"name\":\"강남역\",\"latitude\":37.4979,\"longitude\":127.0276}]");
+    }
+
+    @Test
+    void inputKeepsStoredAddressOfStayPhotoAndMovementEndpoints() {
+        givenInputPendingTaskWithSources(placeSources());
+
+        AiTimelineTaskInputResponse response = service.getInput("v1", TASK_ID, TASK_TOKEN);
+
+        List<JsonNode> payloads = response.sourceItems().stream()
+                .map(AiTimelineTaskInputResponse.SourceItem::payload).toList();
+        assertThat(payloads.get(0).get("address").textValue()).isEqualTo("서울 성동구 성수동2가 322-3");
+        assertThat(payloads.get(1).get("address").textValue()).isEqualTo("서울 성동구 성수동2가 289-5");
+        assertThat(payloads.get(2).get("start").get("address").textValue()).isEqualTo("서울 강남구 역삼동 858");
+        assertThat(payloads.get(2).get("end").get("address").textValue()).isEqualTo("서울 강남구 대치동 509");
+    }
+
+    private void givenInputPendingTaskWithSources(List<TimelineDraftSourceItem> sources) {
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(taskAt(ProcessStage.INPUT_PENDING)));
+        when(dailyRecordService.findById(RECORD_ID)).thenReturn(Optional.of(
+                DailyRecord.createDraft(SUBJECT_ID, DATE, DATE.atTime(22, 0), ZONE)));
+        when(timelineDraftSourceItemService.findByTaskId(TASK_ID)).thenReturn(sources);
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+    }
+
+    /** STAY(객체·옛 문자열 혼재), PHOTO(객체 + clientPhotoUri), MOVEMENT(start·end 객체) 순서. */
+    private static List<TimelineDraftSourceItem> placeSources() {
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode stay = mapper.createObjectNode().put("latitude", 37.5446).put("longitude", 127.0559)
+                .put("address", "서울 성동구 성수동2가 322-3");
+        stay.putArray("places").add(place(mapper, "모수 성수", 37.5447, 127.0561)).add("옛 장소");
+        ObjectNode photo = mapper.createObjectNode()
+                .put("filename", "0190b2c3-d4e5-7f6a-8b9c-0d1e2f3a4b5c.jpg")
+                .put("clientPhotoUri", "content://media/external/images/42")
+                .put("address", "서울 성동구 성수동2가 289-5");
+        photo.putArray("places").add(place(mapper, "성수역", 37.5446, 127.0557));
+        ObjectNode movement = mapper.createObjectNode();
+        movement.putObject("start").put("address", "서울 강남구 역삼동 858")
+                .putArray("places").add(place(mapper, "강남역", 37.4979, 127.0276));
+        movement.putObject("end").put("address", "서울 강남구 대치동 509")
+                .putArray("places").add(place(mapper, "선릉역", 37.5045, 127.0490));
+        return List.of(
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.STAY, "raw-1",
+                        DATE.atTime(9, 0), DATE.atTime(10, 0), stay),
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.PHOTO, "raw-2",
+                        DATE.atTime(10, 30), null, photo),
+                TimelineDraftSourceItem.of(TASK_ID, SUBJECT_ID, ItemType.MOVEMENT, "raw-3",
+                        DATE.atTime(11, 0), DATE.atTime(11, 30), movement));
+    }
+
+    private static ObjectNode place(ObjectMapper mapper, String name, double latitude, double longitude) {
+        return mapper.createObjectNode().put("name", name).put("latitude", latitude).put("longitude", longitude);
+    }
+
+    @Test
     void getInput_afterInputConsumed_rejectedBeforePersonalData() {
         when(timelineTaskService.find(TASK_ID))
                 .thenReturn(Optional.of(taskAt(ProcessStage.RESULT_PENDING)));
@@ -173,7 +300,7 @@ class TimelineAiTaskInputServiceTest {
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
-        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
+        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService, userMemoryService);
     }
 
     @Test
@@ -184,7 +311,7 @@ class TimelineAiTaskInputServiceTest {
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, "wrong"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
-        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
+        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService, userMemoryService);
     }
 
     @Test
@@ -196,7 +323,7 @@ class TimelineAiTaskInputServiceTest {
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
-        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
+        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService, userMemoryService);
     }
 
     @Test
@@ -207,7 +334,7 @@ class TimelineAiTaskInputServiceTest {
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1017));
-        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
+        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService, userMemoryService);
     }
 
     @Test
@@ -258,7 +385,7 @@ class TimelineAiTaskInputServiceTest {
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, TASK_TOKEN))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
-        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
+        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService, userMemoryService);
         verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
     }
 
@@ -270,7 +397,7 @@ class TimelineAiTaskInputServiceTest {
         assertThatThrownBy(() -> service.getInput(VERSION, TASK_ID, "third-party"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.getErrorCode()).isEqualTo(-1002));
-        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService);
+        verifyNoInteractions(dailyRecordService, timelineDraftSourceItemService, userMemoryService);
     }
 
     @Test

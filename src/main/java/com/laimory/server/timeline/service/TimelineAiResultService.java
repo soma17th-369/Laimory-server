@@ -229,14 +229,15 @@ public class TimelineAiResultService {
         return new AiTimelineResultRequest(events);
     }
 
-    /** 공백 이름을 버린 후보를 순서 그대로 치환한다. 필드 누락(null)은 null로 둔다(도입 이전 shape 유지). */
+    /** 공백 이름을 버린 후보의 이름을 순서 그대로 치환한다. 좌표는 그대로다. 필드 누락(null)은 null로 둔다(도입 이전 shape 유지). */
     private List<AiTimelineResultRequest.PlaceCandidate> redactPlaceCandidates(AiTimelineResultRequest.Event event) {
         if (event.placeCandidates() == null) {
             return null;
         }
-        return TimelineAiResultTransactionService.placeCandidateNames(event).stream()
-                .map(name -> new AiTimelineResultRequest.PlaceCandidate(
-                        privacyRedactor.redactText(name, EVENT_TEXT_MAX_LENGTH).text()))
+        return TimelineAiResultTransactionService.placeCandidates(event).stream()
+                .map(candidate -> new AiTimelineResultRequest.PlaceCandidate(
+                        privacyRedactor.redactText(candidate.name(), EVENT_TEXT_MAX_LENGTH).text(),
+                        candidate.latitude(), candidate.longitude()))
                 .toList();
     }
 

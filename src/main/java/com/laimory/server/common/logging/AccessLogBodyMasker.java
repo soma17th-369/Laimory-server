@@ -65,9 +65,11 @@ final class AccessLogBodyMasker {
     // 제목·URL은 allowlist 밖이라 마스크되고 추적에 필요한 종류·버전만 구조 필드로 남는다. URL이 필요하면
     // 그 종류·버전으로 term_documents.content_url을 읽는다(로그가 원본이 아니다).
     // 동의 POST request에는 원문이 없어 기존 field-level 규칙 유지.
-    // AI input(GET /s/api/.../drafts/{taskId}/input)은 저장 시점에 치환된 서버간 응답이라 대상이 아니다.
     // 수동 Event 생성 POST response는 입력 title/subtitle/memo와 연결 PHOTO payload를 echo하므로 대상이다.
     private static final List<PrivacyBodyPath> PRIVACY_RESPONSE_PATHS = List.of(
+            // AI input(#258) — 치환본이지만 사용자 프로필 전체인 userMemory가 타임라인 생성마다 실린다.
+            // 구조 필드만 남기고 userMemory·payload는 allowlist 밖이라 마스크된다.
+            new PrivacyBodyPath("GET", Pattern.compile("^/s/api/v\\d+/timeline/drafts/[^/]+/input$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/drafts/[^/]+$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/daily-records$")),
             new PrivacyBodyPath("GET", Pattern.compile("^/a/api/v\\d+/timeline/daily-records/[^/]+$")),

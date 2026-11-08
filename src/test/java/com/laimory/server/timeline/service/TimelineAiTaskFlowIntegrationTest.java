@@ -9,6 +9,8 @@ import static org.mockito.Mockito.verify;
 import static com.laimory.server.testsupport.SubjectMappingFixtures.ensureExists;
 import static com.laimory.server.testsupport.TestSubjects.id;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laimory.server.common.error.BusinessException;
 import com.laimory.server.common.redis.RedisGateway;
 import com.laimory.server.credit.CreditCostType;
@@ -39,6 +41,7 @@ import com.laimory.server.timeline.repository.TimelineEventItemRepository;
 import com.laimory.server.timeline.repository.TimelineEventPlaceCandidateRepository;
 import com.laimory.server.timeline.repository.TimelineEventRepository;
 import com.laimory.server.timeline.repository.TimelineItemRepository;
+import com.laimory.server.user.service.UserMemoryService;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -102,6 +105,8 @@ class TimelineAiTaskFlowIntegrationTest {
     @Autowired
     private TimelineEventEditService timelineEventEditService;
     @Autowired
+    private UserMemoryService userMemoryService;
+    @Autowired
     private RedisGateway redis;
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -159,6 +164,8 @@ class TimelineAiTaskFlowIntegrationTest {
             redis.delete("timeline:draft-task:loss-timer:" + id);
         });
         createdTaskIds.clear();
+        // user_memories.subject_id도 mapping을 참조하므로 먼저 지운다.
+        userMemoryService.delete(SUBJECT_ID);
         // 완료 푸시 경로가 마스터 행이 없으면 기본 행을 보정하므로(#314) mapping보다 먼저 지운다(FK RESTRICT).
         SubjectMappingFixtures.deleteSubjectScopedPushRows(jdbcTemplate, SUBJECT_ID);
         jdbcTemplate.update("DELETE FROM user_subject_links WHERE subject_id = ?", SUBJECT_ID.toString());
@@ -241,6 +248,22 @@ class TimelineAiTaskFlowIntegrationTest {
         // 같은 결과의 콜백 재전송은 그대로 성공한다(재시도 안전 — 상태는 그대로 SUCCESS).
         callbackService.handleCallback(VERSION, taskId, callbackToken, success());
         assertThat(pollingService.poll(VERSION, SUBJECT_ID, taskId).status()).isEqualTo(TaskStatus.SUCCESS);
+    }
+
+    /** #258: task owner의 저장된 User Memory 문서가 입력 조회 응답에 손실 없이 실린다. */
+    @Test
+    void inputCarriesStoredUserMemoryOfTaskOwner() {
+        ObjectNode memory = JsonNodeFactory.instance.objectNode()
+                .put("schemaVersion", "1.0")
+                .putNull("updatedAt")
+                .put("routines", "아침마다 달리기");
+        memory.putObject("customAttributes").put("pet", "고양이");
+        userMemoryService.replace(SUBJECT_ID, memory);
+        String taskId = createDraft(sources());
+
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+
+        assertThat(input.userMemory()).isEqualTo(memory);
     }
 
     /** question 없는 기존 형식과 공백 문자열은 모두 "질문 없음"(NULL)으로 저장된다. */
@@ -329,6 +352,57 @@ class TimelineAiTaskFlowIntegrationTest {
         assertThat(event.getLatitude()).isEqualTo(37.5445);
         assertThat(event.getLongitude()).isEqualTo(127.0559);
         assertThat(storedCandidateNames(eventId)).containsExactly("성수동 카페", "△△공원");
+    }
+
+    @Test
+    void candidateCoordinatesOverwriteEventCoordinatesAndRoundTripThroughPlaceAssignment() {
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+        String callbackToken = resultService.storeResult(VERSION, taskId, input.taskToken(),
+                resultWithPlaceCandidates(input, List.of(
+                        new AiTimelineResultRequest.PlaceCandidate("성수동 카페", 37.5447, 127.0561),
+                        new AiTimelineResultRequest.PlaceCandidate("△△공원", 90.0, -180.0)))).taskToken();
+        Long eventId = timelineEventRepository
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())
+                .getFirst().getTimelineEventId();
+
+        // 1번 후보 좌표가 AI 관측 좌표(37.5445, 127.0559)를 덮는다(#620).
+        callbackService.handleCallback(VERSION, taskId, callbackToken, success());
+        TimelineEventResponse polled = pollingService.poll(VERSION, SUBJECT_ID, taskId).result().events().getFirst();
+        assertThat(polled.latitude()).isEqualTo(37.5447);
+        assertThat(polled.longitude()).isEqualTo(127.0561);
+        assertThat(polled.placeCandidates()).containsExactly(
+                new TimelineEventResponse.PlaceCandidateResponse("성수동 카페", 37.5447, 127.0561),
+                new TimelineEventResponse.PlaceCandidateResponse("△△공원", 90.0, -180.0));
+
+        // 저장한 후보 좌표(경계값 포함)는 장소 지정 PUT 검증을 그대로 통과한다.
+        timelineEventEditService.updatePlace(VERSION, SUBJECT_ID, eventId,
+                new UpdateTimelineEventPlaceRequest("△△공원", 90.0, -180.0));
+
+        TimelineEvent event = timelineEventRepository.findByTimelineEventIdAndDeletedAtIsNull(eventId).orElseThrow();
+        assertThat(event.getPlace()).isEqualTo("△△공원");
+        assertThat(event.getLatitude()).isEqualTo(90.0);
+        assertThat(event.getLongitude()).isEqualTo(-180.0);
+    }
+
+    @Test
+    void firstCandidateWithoutCoordinatesKeepsAiEventCoordinates() {
+        // 1번 후보만 본다 — 2번 후보에 좌표가 있어도 Event 좌표는 AI 관측 좌표 그대로다.
+        String taskId = createDraft(sources());
+        DailyRecord record = dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE).orElseThrow();
+        AiTimelineTaskInputResponse input = inputService.getInput(VERSION, taskId, capturedRequest().taskToken());
+
+        resultService.storeResult(VERSION, taskId, input.taskToken(), resultWithPlaceCandidates(input, List.of(
+                new AiTimelineResultRequest.PlaceCandidate("성수동 카페", null, null),
+                new AiTimelineResultRequest.PlaceCandidate("△△공원", 37.5444, 127.0374))));
+
+        TimelineEvent event = timelineEventRepository
+                .findByDailyRecordIdAndDeletedAtIsNullOrderByStartAtAscTimelineEventIdAsc(record.getDailyRecordId())
+                .getFirst();
+        assertThat(event.getPlace()).isEqualTo("성수동 카페");
+        assertThat(event.getLatitude()).isEqualTo(37.5445);
+        assertThat(event.getLongitude()).isEqualTo(127.0559);
     }
 
     @Test
@@ -713,7 +787,18 @@ class TimelineAiTaskFlowIntegrationTest {
         return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
                 TimelineEventType.MEAL, "점심 식사", "{place}에서 친구와 파스타", null, place, null,
                 37.5445, 127.0559,
-                java.util.Arrays.stream(candidateNames).map(AiTimelineResultRequest.PlaceCandidate::new).toList(),
+                java.util.Arrays.stream(candidateNames)
+                        .map(name -> new AiTimelineResultRequest.PlaceCandidate(name, null, null)).toList(),
+                input.sourceItems().get(0).startAt(), null,
+                input.sourceItems().stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
+    }
+
+    /** 좌표를 실은 장소 후보와 AI 관측 좌표(37.5445, 127.0559)를 함께 보낸 결과. */
+    private AiTimelineResultRequest resultWithPlaceCandidates(AiTimelineTaskInputResponse input,
+                                                              List<AiTimelineResultRequest.PlaceCandidate> candidates) {
+        return new AiTimelineResultRequest(List.of(new AiTimelineResultRequest.Event(
+                TimelineEventType.MEAL, "점심 식사", "{place}에서 친구와 파스타", null, null, null,
+                37.5445, 127.0559, candidates,
                 input.sourceItems().get(0).startAt(), null,
                 input.sourceItems().stream().map(AiTimelineTaskInputResponse.SourceItem::rawId).toList())));
     }

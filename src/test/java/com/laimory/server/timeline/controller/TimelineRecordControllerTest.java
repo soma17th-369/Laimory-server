@@ -434,8 +434,8 @@ class TimelineRecordControllerTest {
                 LocalDateTime.parse("2026-07-08T12:00:00"), null,
                 "점심 식사", "{place}에서 친구와 파스타", null,
                 "성수동 카페", null, 37.5445, 127.0559,
-                List.of(new TimelineEventResponse.PlaceCandidateResponse("성수동 카페"),
-                        new TimelineEventResponse.PlaceCandidateResponse("△△공원")),
+                List.of(new TimelineEventResponse.PlaceCandidateResponse("성수동 카페", null, null),
+                        new TimelineEventResponse.PlaceCandidateResponse("△△공원", null, null)),
                 null, List.of());
         when(dailyTimelineService.getTimelineEvent(any(), any(), anyLong())).thenReturn(event);
 
