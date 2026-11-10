@@ -421,7 +421,7 @@ resolved 뒤 다시 firing하면 새로 알린다(#617).
 `notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
 대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
 일반 host memory는
-MemAvailable 15% 미만, filesystem cache를 적극 사용하는 ELK는 10%
+MemAvailable 15% 미만, filesystem cache를 적극 사용하는 ELK는 5%
 미만이 각각 10분 지속될 때 경고한다. alert 관련 `dev` merge는 별도 GitHub workflow가 commit SHA
 release publish와 monitoring EC2 SSM 적용을 자동화하며, SSM 직전 `dev` HEAD 재확인으로 stale push의
 host 적용을 막는다. 명시적으로 선택한 `workflow_dispatch` release는 허용한다. credential은 host의
