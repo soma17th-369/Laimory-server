@@ -69,7 +69,7 @@ class GrafanaAlertProvisioningAssetTest {
         assertThat(groupNames).hasSize(12);
         assertThat(ruleUids).hasSize(31);
         assertMemoryRule(rulesByUid.get("laimory_host_memory_low"), "host!=\"elk\"", 0.15);
-        assertMemoryRule(rulesByUid.get("laimory_elk_memory_low"), "host=\"elk\"", 0.1);
+        assertMemoryRule(rulesByUid.get("laimory_elk_memory_low"), "host=\"elk\"", 0.05);
         assertApplicationErrorRule(rulesByUid.get("laimory_application_error_log"));
     }
 

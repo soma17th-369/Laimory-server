@@ -332,6 +332,9 @@ class KakaoGeoResourceBoundaryTest {
         enqueueJson("{\"documents\":[]}");
         enqueueJson("{\"documents\":[]}");
         provider.lookup(37.01, 127.01).block();
+        // 응답 완료 신호는 Netty의 pool 반환보다 먼저 전달될 수 있다. 재사용 가능한 idle 연결이
+        // 생긴 뒤 다음 요청을 보내야 연결 반환과 신규 acquire의 경합을 재사용 실패로 오판하지 않는다.
+        await().untilAsserted(() -> assertThat(idleConnections()).isEqualTo(1.0));
         provider.lookup(37.02, 127.02).block();
         RecordedRequest first = server.takeRequest(2, TimeUnit.SECONDS);
         RecordedRequest second = server.takeRequest(2, TimeUnit.SECONDS);
@@ -372,6 +375,14 @@ class KakaoGeoResourceBoundaryTest {
 
     private double totalConnections() {
         return meterRegistry.find("reactor.netty.connection.provider.total.connections")
+                .tag("name", KakaoGeoHttpConfiguration.POOL_NAME)
+                .gauges().stream()
+                .mapToDouble(gauge -> gauge.value())
+                .sum();
+    }
+
+    private double idleConnections() {
+        return meterRegistry.find("reactor.netty.connection.provider.idle.connections")
                 .tag("name", KakaoGeoHttpConfiguration.POOL_NAME)
                 .gauges().stream()
                 .mapToDouble(gauge -> gauge.value())

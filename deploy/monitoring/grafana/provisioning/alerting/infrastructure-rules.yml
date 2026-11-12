@@ -110,7 +110,7 @@ groups:
             datasourceUid: __expr__
             model:
               conditions:
-                - evaluator: { params: [0.1], type: lt }
+                - evaluator: { params: [0.05], type: lt }
                   operator: { type: and }
                   query: { params: [C] }
                   reducer: { params: [], type: last }
@@ -125,8 +125,8 @@ groups:
         execErrState: Error
         for: 10m
         annotations:
-          summary: 'Available memory is below 10% on ELK.'
-          description: 'ELK MemAvailable has remained below 10% for 10 minutes; inspect Elasticsearch heap, filesystem cache, swap, and OOM history.'
+          summary: 'Available memory is below 5% on ELK.'
+          description: 'ELK MemAvailable has remained below 5% for 10 minutes; inspect Elasticsearch heap, filesystem cache, swap, and OOM history.'
           runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#host-resource-pressure
         labels:
           environment: dev

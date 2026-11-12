@@ -466,6 +466,14 @@ application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `Cache
 전까지 만료 알림을 받지 못한다(수용 — ERROR 경보로 감지, 재시작으로 회복). 구독이 성립한 뒤의 연결 끊김은 listener
 container가 backoff로 다시 구독한다(끊긴 동안의 알림은 유실).
 
+Redis 이전 dual write(#638): `app.redis.mirror.host`가 설정되면 `RedisGateway`의 쓰기 연산이 primary 성공 뒤 secondary
+`RedisMirror`에도 같은 env prefix 키로 동기 반영된다. 원자 연산은 primary 결과가 결정한다 — `setIfAbsent`는 이겼을 때만 SET PX,
+`getAndDelete`는 값을 돌려줬을 때만 DEL, `setIfPresent*`·`expire`는 성공했을 때만 같은 명령(SET XX PX/KEEPTTL·PEXPIRE),
+나머지 쓰기(SET·DEL·ZADD·ZADD NX·ZREM·ZREMRANGEBYSCORE)는 그대로 보낸다. 읽기는 반영하지 않는다. secondary에 키가 없으면
+XX 계열은 아무것도 쓰지 않는다(dual write 전 생성 키). secondary 실패는 WARN `redis mirror write failed`만 남기고 gateway의
+반환값·예외에 영향이 없다(지표 없음). Spring Cache·Spring Session·만료 구독은 반영 대상이 아니다. `RedisMirror`는
+`RedisAccessArchTest`의 네 번째 승인 예외이며, 연결을 bean 없이 소유한다(bean이면 Boot의 primary 자동 구성이 꺼진다).
+
 | Logical key/namespace | Purpose | Lifetime |
 |---|---|---|
 | `timeline:draft-task:{taskId}` | draft state (세 상태 모두 owner UUIDv4 subject·선생성 `dailyRecordId`·단계별 token hash 셋 보존, PROCESSING에만 `timelineWindow`·필수 `processingStartedAt`, 재시도 인지용 nullable `retryReceipt{previousTokenHash,claimedAt,retryableUntil}` 포함 — 소비된 직전 token의 hash와 결과 저장 선점 시각·재시도 절대 마감이며 원문 token도 요청 본문도 저장하지 않는다. terminal 전이가 버리고, key가 없는 배포 이전 JSON은 null로 역직렬화된다). stage·terminal 전이는 native `SET XX`(존재 확인만, 값 비교 없음)라 shape 변경이 배포 중 CAS 불일치를 만들지는 않지만, 구독자가 구/신 shape를 모두 읽을 수 있어야 하는 관대 수용 원칙은 그대로다. FAILED `error`는 JSON number이며 문자열 코드와 필수 필드가 빠진 shape는 역직렬화를 거부한다. null·미지 numeric error는 polling에서 `-1011`로 수렴한다. 처리 기한(3m)이 지나도록 보고가 없으면 유실 처리가 살아 있는 task를 일반 FAILED(`-1008`, `dailyRecordId`·`tokenHash` 보존)로 종결한다(#565·#593). PROCESSING key 만료는 그 처리마저 없었던 task의 key 소멸이며 FAILED 전이가 아니다. `dailyRecordId`·`tokenHash`가 없는 유실 FAILED(FAILED에 한해 null 허용·JSON 생략)는 #593 전 유실 처리가 key가 없을 때만(`SET NX`) 쓰던 형태로, 서버는 더 이상 쓰지 않고 배포 전·롤링 배포 중 옛 서버가 쓴 값을 terminal TTL 동안 읽기만 한다. 이 필드를 `long`으로 읽는 구 image는 유실 FAILED를 역직렬화하지 못해 그 task 폴링이 500이다(rolling·rollback 수용). | PROCESSING 최초 저장 기준 절대 5m(PROCESSING TTL — 처리 기한 3m보다 길어 유실 처리가 task를 읽는다; stage write는 `KEEPTTL`이라 연장 없음), terminal 24h |

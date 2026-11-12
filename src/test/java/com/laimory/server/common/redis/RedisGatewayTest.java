@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisStringCommands;
 import org.springframework.data.redis.connection.RedisStringCommands.SetOption;
@@ -43,8 +44,11 @@ class RedisGatewayTest {
     private RedisConnection connection;
     @Mock
     private RedisStringCommands stringCommands;
+    @Mock
+    private StringRedisTemplate mirrorTemplate;
 
     private static final String LOGICAL_KEY = "timeline:draft-task:abc";
+    private static final RedisMirror DISABLED_MIRROR = new RedisMirror(null);
 
     /** {@code template.execute(RedisCallback)}이 mock connection으로 callback을 실제 실행하게 한다. */
     private void runCallbacksWithMockConnection() {
@@ -57,7 +61,7 @@ class RedisGatewayTest {
     @Test
     void emptyPrefix_usesLogicalKeyAsIs() {
         when(template.opsForValue()).thenReturn(valueOps);
-        RedisGateway redis = new RedisGateway(template, "");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "");
 
         redis.set(LOGICAL_KEY, "v", Duration.ofMinutes(1));
         redis.get(LOGICAL_KEY);
@@ -71,7 +75,7 @@ class RedisGatewayTest {
     @Test
     void nonEmptyPrefix_prependsToEveryKey() {
         when(template.opsForValue()).thenReturn(valueOps);
-        RedisGateway redis = new RedisGateway(template, "dev_");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
 
         redis.set(LOGICAL_KEY, "v", Duration.ofMinutes(1));
         redis.get(LOGICAL_KEY);
@@ -85,7 +89,7 @@ class RedisGatewayTest {
     @Test
     void setIfPresentKeepingTtl_prefixesKey_andSendsXxKeepTtl() {
         runCallbacksWithMockConnection();
-        RedisGateway redis = new RedisGateway(template, "dev_");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
         when(stringCommands.set(any(byte[].class), any(byte[].class), any(Expiration.class), eq(SetOption.ifPresent())))
                 .thenReturn(true);
 
@@ -104,7 +108,7 @@ class RedisGatewayTest {
     @Test
     void setIfPresent_prefixesKey_andSendsXxWithPxTtl_missingKeyReturnsFalse() {
         runCallbacksWithMockConnection();
-        RedisGateway redis = new RedisGateway(template, "dev_");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
         when(stringCommands.set(any(byte[].class), any(byte[].class), any(Expiration.class), eq(SetOption.ifPresent())))
                 .thenReturn(false);
 
@@ -122,7 +126,7 @@ class RedisGatewayTest {
     @Test
     void taskIndexOps_prefixKeys_andUseNativeCommands() {
         when(template.opsForZSet()).thenReturn(zSetOps);
-        RedisGateway redis = new RedisGateway(template, "dev_");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
         when(zSetOps.add("dev_processing-index", "abc", 1_780_000_000_000d)).thenReturn(false);
         when(template.expire("dev_user-index", Duration.ofMinutes(3))).thenReturn(true);
 
@@ -136,7 +140,7 @@ class RedisGatewayTest {
     @Test
     void taskIndexOps_missingOrNullResults_areExplicit() {
         when(template.opsForZSet()).thenReturn(zSetOps);
-        RedisGateway redis = new RedisGateway(template, "");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "");
         when(zSetOps.add("index", "abc", 1d)).thenReturn(null);
         when(template.expire("index", Duration.ofMinutes(3))).thenReturn(false);
 
@@ -148,7 +152,7 @@ class RedisGatewayTest {
     @Test
     void getSortedSetReverseRange_prefixesKey_andPreservesReverseOrder() {
         when(template.opsForZSet()).thenReturn(zSetOps);
-        RedisGateway redis = new RedisGateway(template, "dev_");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
         when(zSetOps.reverseRange("dev_timeline:draft-task:user:7:processing", 0, -1))
                 .thenReturn(new LinkedHashSet<>(List.of("newest", "older", "oldest")));
 
@@ -159,7 +163,7 @@ class RedisGatewayTest {
     @Test
     void getSortedSetReverseRange_missingKey_returnsEmptyList() {
         when(template.opsForZSet()).thenReturn(zSetOps);
-        RedisGateway redis = new RedisGateway(template, "");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "");
         when(zSetOps.reverseRange("timeline:draft-task:user:7:processing", 0, -1))
                 .thenReturn(new LinkedHashSet<>());
 
@@ -169,7 +173,7 @@ class RedisGatewayTest {
     @Test
     void multiGet_prefixesEveryKey_andAlignsValuesWithMissingAsNull() {
         when(template.opsForValue()).thenReturn(valueOps);
-        RedisGateway redis = new RedisGateway(template, "dev_");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
         when(valueOps.multiGet(List.of("dev_timeline:draft-task:a", "dev_timeline:draft-task:b")))
                 .thenReturn(java.util.Arrays.asList("json-a", null));
 
@@ -180,7 +184,7 @@ class RedisGatewayTest {
     @Test
     void removeFromSortedSet_prefixesKey_andRemovesAllMembersInOneCall() {
         when(template.opsForZSet()).thenReturn(zSetOps);
-        RedisGateway redis = new RedisGateway(template, "dev_");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
         when(zSetOps.remove("dev_timeline:draft-task:user:7:processing", "a", "b")).thenReturn(2L);
 
         assertThat(redis.removeFromSortedSet(
@@ -190,7 +194,7 @@ class RedisGatewayTest {
     @Test
     void stuckIndexOps_prefixKey_andUseNativeCommands() {
         when(template.opsForZSet()).thenReturn(zSetOps);
-        RedisGateway redis = new RedisGateway(template, "dev_");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
         when(zSetOps.removeRangeByScore("dev_timeline:draft-task:processing-index",
                 Double.NEGATIVE_INFINITY, 1_779_996_400_000d)).thenReturn(2L);
         when(zSetOps.count("dev_timeline:draft-task:processing-index",
@@ -206,7 +210,7 @@ class RedisGatewayTest {
     void pendingQueueOps_prefixKey_andUseNxAndScoreBounds() {
         // 미반영 큐는 Lua 없이 평범한 명령만 쓴다 — 동시성 보장이 전부 단일 명령에서 나오기 때문이다.
         when(template.opsForZSet()).thenReturn(zSetOps);
-        RedisGateway redis = new RedisGateway(template, "dev_");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
         when(zSetOps.removeRangeByScore("dev_pending", Double.NEGATIVE_INFINITY, 100d)).thenReturn(2L);
         when(zSetOps.rangeByScore("dev_pending", Double.NEGATIVE_INFINITY, 500d, 0, 3))
                 .thenReturn(new LinkedHashSet<>(List.of("7:42", "7:43")));
@@ -228,7 +232,7 @@ class RedisGatewayTest {
 
     @Test
     void pendingQueueOps_nullFromTemplate_throwIllegalState() {
-        RedisGateway redis = new RedisGateway(template, "");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "");
         when(template.opsForZSet()).thenReturn(zSetOps);
         when(zSetOps.removeRangeByScore("pending", Double.NEGATIVE_INFINITY, 1d)).thenReturn(null);
         when(zSetOps.rangeByScore("pending", Double.NEGATIVE_INFINITY, 2d, 0, 5)).thenReturn(null);
@@ -243,10 +247,22 @@ class RedisGatewayTest {
     }
 
     @Test
+    void mirrorWriteFailureKeepsPrimaryWriteAndRaisesNothing() {
+        when(template.opsForValue()).thenReturn(valueOps);
+        when(mirrorTemplate.opsForValue())
+                .thenThrow(new RedisConnectionFailureException("secondary unreachable"));
+        RedisGateway redis = new RedisGateway(template, new RedisMirror(mirrorTemplate), "");
+
+        redis.set(LOGICAL_KEY, "v", Duration.ofMinutes(1));
+
+        verify(valueOps).set(LOGICAL_KEY, "v", Duration.ofMinutes(1));
+    }
+
+    @Test
     void setIfPresent_nullFromTemplate_throwsIllegalState() {
         when(template.getStringSerializer()).thenReturn(RedisSerializer.string());
         when(template.execute(ArgumentMatchers.<RedisCallback<Boolean>>any())).thenReturn(null);
-        RedisGateway redis = new RedisGateway(template, "");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "");
 
         assertThatThrownBy(() -> redis.setIfPresentKeepingTtl(LOGICAL_KEY, "new"))
                 .isInstanceOf(IllegalStateException.class);
@@ -256,7 +272,7 @@ class RedisGatewayTest {
 
     @Test
     void batchReadAndRemoveOps_nullFromTemplate_throwIllegalState() {
-        RedisGateway redis = new RedisGateway(template, "");
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "");
         when(template.opsForZSet()).thenReturn(zSetOps);
         when(template.opsForValue()).thenReturn(valueOps);
         when(zSetOps.reverseRange("index", 0, -1)).thenReturn(null);

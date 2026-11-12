@@ -1072,7 +1072,7 @@ JVM & Spring에서 heap/GC, pending connection, acquire timeout을 함께 본다
 
 Infrastructure에서 실제 filesystem과 `MemAvailable`을 확인한다. tmpfs/overlay 같은 pseudo filesystem은
 disk alert에서 제외된다. 일반 host는 `MemAvailable < 15%`, filesystem cache를 적극 사용하는 ELK는
-`MemAvailable < 10%`가 각각 10분 지속될 때 경고한다. ELK 경고는 Elasticsearch heap, filesystem cache,
+`MemAvailable < 5%`가 각각 10분 지속될 때 경고한다. ELK 경고는 Elasticsearch heap, filesystem cache,
 swap activity와 OOM 이력을 함께 확인하고, 실제 reclaim 실패나 OOM 징후 없이 cache만 큰 경우에는 스펙
 증설 근거로 단독 사용하지 않는다. collector/cardinality를 줄여도 monitoring medium의 memory 75%가
 지속되면 별도 resize 변경을 검토한다.
