@@ -306,6 +306,11 @@ Flyway 전용 계정(`SPRING_FLYWAY_USER`)의 DDL 권한은 live 조회로 확�
   대상 Runtime 한정 `bedrock-agentcore:InvokeAgentRuntime` 부여(대상·영향·rollback 설명 후 별도 승인)
   ③ `.env`에 `APP_AI_MODE=agentcore`와 Runtime ARN·endpoint를 넣고 재배포다. rollback은 `.env`를 이전
   mode로 되돌리고 다시 재생성하는 것뿐이며, 이미 접수된 task는 AI 결과 또는 TTL이 종결한다.
+- Redis primary 전환(#638)은 host `.env`의 `REDIS_*`와 `REDIS_MIRROR_*` 값을 두 WAS에서 맞바꾸고
+  `workflow_dispatch`(environment=prod, deploy_target=all, 현재 image의 sha·digest)로 재생성하는 것이다. rollback은 다시
+  맞바꿔 재배포다. 전환 재배포 중 auto rollback이 일어나면 직전 container(옛 env)가 재시작돼 host `.env`와 실행 env가
+  어긋나고 이미 넘어간 WAS와 primary가 갈린다 — 즉시 두 host `.env`를 되돌리고 재배포해 맞춘다. 전환 전 확인: dual write
+  기간 `redis mirror write failed` 0건, 새 primary의 `notify-keyspace-events`에 `K`·`x`.
 - prod 배포의 live 선행 조건은 repository Secrets `PROD_INSTANCE_IDS`·`PROD_TARGET_GROUP_ARN`,
   해당 host에 대한 SSM 배포 권한, ALB 조회·등록·해제 권한이다. deploy role에
   `elasticloadbalancing:DescribeTargetGroups`·`DescribeTargetHealth` 조회 권한과 **prod target group ARN에

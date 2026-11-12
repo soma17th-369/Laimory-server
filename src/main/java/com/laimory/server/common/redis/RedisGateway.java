@@ -22,21 +22,29 @@ import org.springframework.stereotype.Component;
  *
  * <p><b>불변식:</b> 호출부는 항상 prefix 없는 <b>논리 키</b>(예: {@code timeline:draft-task:{id}})만
  * 넘긴다 — 환경 prefix 부착은 전적으로 이 클래스의 책임이다.
+ *
+ * <p>Redis 이전 dual write(#638): 쓰기 연산은 primary 성공 뒤 {@link RedisMirror}(secondary)에도 반영한다. 원자 연산은
+ * primary 결과가 결정하고(SET NX가 이겼을 때만 SET, GETDEL이 값을 돌려줬을 때만 DEL, SET XX·PEXPIRE가 성공했을 때만
+ * 같은 명령), 읽기는 반영하지 않는다. mirror 실패는 이 클래스의 반환값·예외에 영향을 주지 않는다.
  */
 @Component
 public class RedisGateway {
 
     private final StringRedisTemplate template;
+    private final RedisMirror mirror;
     private final String prefix;
 
     public RedisGateway(StringRedisTemplate template,
+                         RedisMirror mirror,
                          @Value("${app.redis.key-prefix:}") String prefix) {
         this.template = template;
+        this.mirror = mirror;
         this.prefix = prefix;
     }
 
     public void set(String logicalKey, String value, Duration ttl) {
         template.opsForValue().set(prefix + logicalKey, value, ttl);
+        mirror.set(prefix + logicalKey, value, ttl);
     }
 
     public String get(String logicalKey) {
@@ -44,7 +52,9 @@ public class RedisGateway {
     }
 
     public Boolean delete(String logicalKey) {
-        return template.delete(prefix + logicalKey);
+        Boolean deleted = template.delete(prefix + logicalKey);
+        mirror.delete(prefix + logicalKey);
+        return deleted;
     }
 
     /**
@@ -52,7 +62,11 @@ public class RedisGateway {
      * 일회용 코드 소비용 — 동시 소비 경합에서 정확히 한 호출만 값을 받는다.
      */
     public String getAndDelete(String logicalKey) {
-        return template.opsForValue().getAndDelete(prefix + logicalKey);
+        String value = template.opsForValue().getAndDelete(prefix + logicalKey);
+        if (value != null) {
+            mirror.delete(prefix + logicalKey);
+        }
+        return value;
     }
 
     /**
@@ -80,6 +94,9 @@ public class RedisGateway {
         if (result == null) {
             // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
             throw new IllegalStateException("Redis set이 null을 반환했습니다: " + logicalKey);
+        }
+        if (result) {
+            mirror.setIfPresent(prefix + logicalKey, value, expiration);
         }
         return result;
     }
@@ -116,7 +133,11 @@ public class RedisGateway {
      * TTL이 있어 소유자가 죽어도 자동으로 풀린다.
      */
     public boolean setIfAbsent(String logicalKey, String value, Duration ttl) {
-        return Boolean.TRUE.equals(template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl));
+        boolean acquired = Boolean.TRUE.equals(template.opsForValue().setIfAbsent(prefix + logicalKey, value, ttl));
+        if (acquired) {
+            mirror.set(prefix + logicalKey, value, ttl);
+        }
+        return acquired;
     }
 
     // ── 대기 큐용 sorted set 연산 ──
@@ -133,6 +154,7 @@ public class RedisGateway {
      */
     public void addToSortedSetIfAbsent(String logicalSortedSetKey, String member, long score) {
         template.opsForZSet().addIfAbsent(prefix + logicalSortedSetKey, member, score);
+        mirror.addToSortedSetIfAbsent(prefix + logicalSortedSetKey, member, score);
     }
 
     /** sorted set member를 추가하거나 기존 member의 score를 갱신한다(ZADD). */
@@ -141,6 +163,7 @@ public class RedisGateway {
         if (added == null) {
             throw new IllegalStateException("Redis zadd가 null을 반환했습니다: " + logicalSortedSetKey);
         }
+        mirror.addToSortedSet(prefix + logicalSortedSetKey, member, score);
     }
 
     /** {@code score <= expiredScore}인 member를 제거하고 제거 수를 반환한다(ZREMRANGEBYSCORE). */
@@ -151,6 +174,7 @@ public class RedisGateway {
             // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
             throw new IllegalStateException("Redis zremrangebyscore가 null을 반환했습니다: " + logicalSortedSetKey);
         }
+        mirror.pruneSortedSetByScore(prefix + logicalSortedSetKey, expiredScore);
         return removed;
     }
 
@@ -181,7 +205,11 @@ public class RedisGateway {
 
     /** key에 TTL을 다시 걸고 성공 여부를 반환한다(PEXPIRE). key가 없으면 false다. */
     public boolean expire(String logicalKey, Duration ttl) {
-        return Boolean.TRUE.equals(template.expire(prefix + logicalKey, ttl));
+        boolean applied = Boolean.TRUE.equals(template.expire(prefix + logicalKey, ttl));
+        if (applied) {
+            mirror.expire(prefix + logicalKey, ttl);
+        }
+        return applied;
     }
 
 
@@ -193,6 +221,7 @@ public class RedisGateway {
             // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
             throw new IllegalStateException("Redis zrem이 null을 반환했습니다: " + logicalSortedSetKey);
         }
+        mirror.removeFromSortedSet(prefix + logicalSortedSetKey, members);
         return removed;
     }
 
