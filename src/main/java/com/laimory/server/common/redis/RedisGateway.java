@@ -16,9 +16,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>prefix는 {@code app.redis.key-prefix}(env {@code REDIS_KEY_PREFIX})에서 온다. prod·로컬은
  * 빈 문자열이라 논리 키를 그대로 쓴다(기존 동작 유지). 다른 코드의 Spring Data Redis 직접 접근은
- * ArchUnit(RedisAccessArchTest)으로 빌드에서 금지한다 — 승인 예외는 Spring Cache의 Redis 매니저를
- * 배선하는 {@code CacheConfig} 하나이며(#429), 그쪽도 같은 prefix 속성을 캐시 키에 붙여 이 격리
- * 불변식을 동일하게 지킨다.
+ * ArchUnit(RedisAccessArchTest)으로 빌드에서 금지한다 — 승인 예외 목록은 {@code RedisAccessArchTest}가 소유하며,
+ * 예외들도 같은 prefix 속성을 붙여 이 격리 불변식을 동일하게 지킨다.
  *
  * <p><b>불변식:</b> 호출부는 항상 prefix 없는 <b>논리 키</b>(예: {@code timeline:draft-task:{id}})만
  * 넘긴다 — 환경 prefix 부착은 전적으로 이 클래스의 책임이다.
