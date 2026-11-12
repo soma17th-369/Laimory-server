@@ -116,6 +116,11 @@ application 배포·health gate 의존성이 아니다.
 값이나 credential은 기록하지 않고 이름과 역할만 다룬다.
 
 - DB/Redis connection and `REDIS_KEY_PREFIX`
+- Redis 이전 dual write secondary(#638): `REDIS_MIRROR_HOST`·`REDIS_MIRROR_PORT`(기본 6379)·`REDIS_MIRROR_USERNAME`(기본
+  `default`)·`REDIS_MIRROR_PASSWORD`·`REDIS_MIRROR_SSL`(기본 true). host가 비면 mirror 없음(checked-in 기본, dev·test·로컬·OCI).
+  설정하면 `RedisGateway`의 key 쓰기를 secondary에도 동기 반영한다(캐시·Spring Session·만료 구독·readiness는 `REDIS_*`
+  primary만). primary·secondary 전환은 `REDIS_*`와 `REDIS_MIRROR_*` 값을 맞바꿔 재배포한다(절차는 deployment.md).
+  deploy preflight는 `REDIS_*`와 마찬가지로 이 키들을 검사하지 않는다.
 - `JWT_SECRET`, Google/Kakao OAuth client names
 - `APP_EDGE_TRUSTED_PROXY_CIDRS`(#327 — 신뢰 엣지 판정용 CIDR 목록, 콤마 구분. ALB ENI가 사는 서브넷을
   넣으면 그 peer의 `X-Forwarded-For` 최우측만 client IP로 신뢰한다. checked-in 기본값은 비어 있어
