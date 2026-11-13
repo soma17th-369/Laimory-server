@@ -89,6 +89,10 @@ async function fallback(request, env, ctx, key) {
   if (contentLength !== null) {
     headers.set('content-length', contentLength);
   }
+  const etag = upstream.headers.get('etag');
+  if (etag !== null) {
+    headers.set('etag', etag);
+  }
 
   let body = upstream.body;
   // R2 put은 길이를 아는 stream만 받는다 — 길이를 모르면 저장 없이 응답만 하고 다음 요청에서 다시 폴백한다.
