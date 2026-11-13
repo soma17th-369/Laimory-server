@@ -42,6 +42,10 @@ dependencies {
 	// Bedrock AgentCore data plane: AI 접수를 InvokeAgentRuntime으로 보낸다(#338 — app.ai.mode=agentcore).
 	// 이 모듈은 SDK 2.32.2부터 배포돼 BOM을 2.54.2로 올렸다(s3·secretsmanager도 같은 BOM이 정렬).
 	implementation 'software.amazon.awssdk:bedrockagentcore'
+	// OCI Vault: OCI 인스턴스에서 subject 매핑 HMAC key를 기동 시 1회 로드(#644 — app.subject.mode=ocivault).
+	// HTTP client는 Jakarta 계열(jersey3) 구현을 쓴다. Spring BOM 비관리 → 두 모듈 같은 버전 명시.
+	implementation 'com.oracle.oci.sdk:oci-java-sdk-secrets:3.101.0'
+	implementation 'com.oracle.oci.sdk:oci-java-sdk-common-httpclient-jersey3:3.101.0'
 	// JSON 구조화 로그(ELK 수집용 stdout). Spring BOM 비관리 → 버전 명시. 8.x = logback 1.5.x 호환.
 	implementation 'net.logstash.logback:logstash-logback-encoder:8.1'
 	// 자체 JWT(access token) HS256 서명/검증. Spring BOM 비관리 → 버전 명시.
