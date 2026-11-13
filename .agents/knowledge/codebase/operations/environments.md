@@ -147,9 +147,11 @@ application 배포·health gate 의존성이 아니다.
   `APP_GEO_CIRCUIT_FAILURE_RATE_THRESHOLD`, `APP_GEO_CIRCUIT_WAIT_DURATION_IN_OPEN_STATE`,
   `APP_GEO_CIRCUIT_PERMITTED_CALLS_IN_HALF_OPEN`
 - `APP_PUSH_MODE`, `GOOGLE_APPLICATION_CREDENTIALS`(credential 값이 아니라 컨테이너 내부 JSON 파일 경로)
-- subject 매핑 HMAC(#282): `APP_SUBJECT_MODE`(`secretsmanager|fixture` — provider 선택은 이 mode
+- subject 매핑 HMAC(#282): `APP_SUBJECT_MODE`(`secretsmanager|ocivault|fixture` — provider 선택은 이 mode
   property 단일 축이고 배포 기본 프로필은 무기본값 fail-fast), `APP_SUBJECT_SECRET_ARN`(key 값이
   아니라 대상 Secrets Manager secret의 ARN 식별자 — key는 기동 시 `GetSecretValue` 1회로만 로드).
+  `APP_SUBJECT_OCI_SECRET_ID`(#644, `ocivault` 모드 필수 — OCI Vault secret OCID, 인증은 instance principal이라
+  자격증명 env 없음). AWS `.env`는 preflight가 `secretsmanager`로 고정하므로 `ocivault`는 OCI 인스턴스 전용이다.
   `app.subject.fixture-key` 기본값은 docker 프로필만 소유해 배포 기본 프로필의 fixture mode는
   무기본값 property로 기동 실패하며, deploy preflight의 mode 값 고정·`SPRING_PROFILES_ACTIVE`
   docker 금지 가드가 이를 이중으로 막는다.
