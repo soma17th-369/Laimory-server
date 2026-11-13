@@ -157,6 +157,11 @@ application 배포·health gate 의존성이 아니다.
 - `SWAGGER_ENABLED`
 - `APP_COMMIT_SHA`(비밀 아님, dev deploy image SHA), `TIMELINE_STUCK_AFTER`
 - `AWS_REGION`, S3/CDN and photo upload limit names
+- 사진 저장소 선택(#642): `PHOTO_STORAGE_PRIMARY`(`s3` 기본 | `r2`), R2 `PHOTO_R2_ENDPOINT`·`PHOTO_R2_BUCKET`·
+  `PHOTO_R2_ACCESS_KEY_ID`·`PHOTO_R2_SECRET_ACCESS_KEY`. R2 키는 AWS 표준 이름(`AWS_ACCESS_KEY_ID` 등)을 쓰지 않는다 —
+  deploy pre-flight가 `.env`의 AWS credential override를 금지하고, 기본 자격증명 체인에 섞이면 Secrets Manager·AgentCore
+  클라이언트가 R2 키로 뜬다. `PHOTO_R2_BUCKET`이 있으면 나머지 셋이 필수이고 `PHOTO_STORAGE_PRIMARY=r2`는 R2 설정
+  없이 기동 실패한다
 - `ACCOUNT_ERASURE_WORKER_ENABLED`, `ACCOUNT_ERASURE_DELETE_CRON`, `ACCOUNT_ERASURE_ZONE`,
   `ACCOUNT_ERASURE_CONCURRENCY`, `ACCOUNT_ERASURE_MAX_JOBS_PER_RUN` (checked-in default는 worker on — 삭제
   매일 `02:30` `Asia/Seoul`, 접수일 D 기준 D+3~D+5. 유예 2일·처리 창 3일은 약관 "5일 이내 파기"에 묶인

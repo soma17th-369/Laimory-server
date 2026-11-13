@@ -106,6 +106,22 @@ credential 이름은 `KAKAO_REST_API_KEY`다. 값은 복제하지 않는다.
 
 관련 이름은 `AWS_REGION`, `PHOTO_S3_BUCKET`, `PHOTO_CDN_DOMAIN`과 upload limit property들이다.
 
+**저장소 구성 — S3 → Cloudflare R2 이전(#642)**: 저장소는 AWS S3(`PHOTO_S3_BUCKET`)와 R2(`PHOTO_R2_BUCKET`이 있을 때만)다.
+`PHOTO_STORAGE_PRIMARY`(`s3` 기본 | `r2`)가 고른 저장소에만 presign하고 `PHOTO_CDN_DOMAIN`도 그 저장소의 서빙 도메인을
+가리킨다. **삭제(`deleteAll`·계정 삭제)는 설정된 저장소 전부에** 하고 key는 모든 저장소가 `Deleted`로 확인해야
+삭제로 본다(어느 한쪽 Error면 Error, 예외는 전파해 job 유지). S3는 primary이거나 bucket 값이 있을 때 포함된다 —
+R2 primary + S3 bucket 비움이 R2 단독이다. env를 바꾸지 않으면 S3 단독으로 이전과 같다.
+- R2에는 버전 API(`ListObjectVersions`)가 없고 버전도 없다. 계정 삭제 목록은 S3를 먼저 version까지 읽고, S3 prefix가
+  비면 R2를 `ListObjectsV2`로 읽는다(R2 항목은 versionId `null`). 삭제는 같은 페이지를 두 저장소에 보낸다(S3는
+  version 지정, R2는 key만).
+- R2 클라이언트는 `PHOTO_R2_ENDPOINT`·`PHOTO_R2_ACCESS_KEY_ID`·`PHOTO_R2_SECRET_ACCESS_KEY`로 만든 **전용 static
+  자격증명**만 쓴다(`R2PhotoBucket`) — AWS 기본 체인에 섞지 않는다. path-style, checksum은 요구될 때만 계산·검증.
+  presigned URL은 R2 S3 API 도메인(`<account>.r2.cloudflarestorage.com`)에서만 동작한다(custom domain 불가).
+- R2 서빙은 `cdn.laimory.app` Worker(`deploy/cloudflare/cdn-worker/`)다: R2 binding 우선, 이전 기간에는 R2에 없으면
+  이전 CloudFront에서 가져와 응답하고 R2에 저장(폴백), 엣지 1일 캐시(`s-maxage=86400`)·404 no-store.
+- DB에 URL이 materialize되는 것은 사진 `photoUrl`뿐이다. 문의 첨부·공지 썸네일은 filename만 저장하고 조회 때
+  `PHOTO_CDN_DOMAIN`을 붙이므로 도메인 변경 시 backfill 대상이 아니다.
+
 **사진 bucket 운영 계약(2026-08-28 조회 확인)**: `laimory-photos-…`는 **versioning 미설정·Object
 Lock 없음·lifecycle 없음**이다. versioning을 켤 계획이 없다 — 업로드마다 UUIDv7 파일명이라 덮어쓰기가
 없어 복구 이점이 없고, delete marker가 계정 삭제(#302)의 삭제 요구와 충돌한다.
