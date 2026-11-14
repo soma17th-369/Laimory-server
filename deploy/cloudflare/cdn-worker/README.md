@@ -1,7 +1,19 @@
-# cdn Worker (`cdn.laimory.app`)
+# cdn Worker (`cdn.laimory.app`의 origin)
 
-사진·문의 첨부·공지 썸네일을 R2에서 서빙하는 Cloudflare Worker다(#642). 서버는 `PHOTO_CDN_DOMAIN`으로
-이 도메인을 URL에 붙이고, 앱·관리자 웹·AI는 그 URL을 바로 GET한다.
+사진·문의 첨부·공지 썸네일을 R2에서 서빙하는 Cloudflare Worker다(#642). 서버는 `PHOTO_CDN_DOMAIN`(`cdn.laimory.app`)을
+URL에 붙이고, 앱·관리자 웹·AI는 그 URL을 바로 GET한다.
+
+## 요청 경로
+
+```text
+클라이언트 → cdn.laimory.app = Amazon CloudFront (엣지 캐시)
+               └ 캐시 미스 → cdn-origin.laimory.app = 이 Worker → R2 (이전 기간에는 R2에 없으면 폴백)
+```
+
+`cdn.laimory.app`은 CloudFront 배포를 가리키는 DNS-only CNAME이고, Worker는 Workers custom domain
+`cdn-origin.laimory.app`에만 붙어 있다. Cloudflare Free 프록시는 국내 일부 통신사(예: KT) 요청을 미국 서부 엣지로
+보내 사진 응답이 크게 느려졌기 때문에, 클라이언트가 처음 붙는 지점을 서울 엣지가 있는 CloudFront로 두었다.
+CloudFront에서 Worker로 가는 캐시 미스는 Cloudflare 서울 데이터센터에서 처리되는 것을 확인했다.
 
 ## 동작
 
@@ -32,7 +44,21 @@
 }
 ```
 
-도메인은 Workers custom domain으로 `cdn.laimory.app`에 붙인다(DNS 레코드·인증서 자동).
+도메인은 Workers custom domain으로 `cdn-origin.laimory.app`에 붙인다(DNS 레코드·인증서 자동). `cdn.laimory.app`에는
+붙이지 않는다 — 그 이름은 CloudFront가 받고, 같은 이름을 origin으로 쓰면 CloudFront가 자기 자신을 부른다.
+
+## CloudFront 앞단 (수동 구성)
+
+계정·배포 ID는 저장소에 적지 않는다. 정액 요금제(Free)는 관리형 정책만 허용하므로 아래처럼 둔다.
+
+- origin: `cdn-origin.laimory.app`, HTTPS only(TLS 1.2 이상).
+- 캐시 정책: 관리형 `CachingOptimized` — Worker 응답의 `s-maxage=86400`을 따라 엣지 1일 캐시.
+- origin 요청 정책: **없음**. Host가 `cdn-origin.laimory.app`으로 가야 한다. 클라이언트 Host(`cdn.laimory.app`)를
+  넘기는 정책을 쓰면 Cloudflare가 그 이름을 Worker로 보내지 못한다.
+- 허용 메서드 GET·HEAD, HTTP는 HTTPS로 리다이렉트, 대체 도메인 `cdn.laimory.app` + us-east-1 ACM 인증서.
+- 접근 로그는 끈다 — 경로에 subject 해시가 들어 있다.
+- 정액 요금제는 WAF web ACL 연결이 필수다. 플랜 구독 흐름이 만든 web ACL을 쓴다(따로 만든 web ACL을 종량제
+  배포에 붙이면 별도 과금).
 
 ## 검증
 
@@ -40,5 +66,9 @@
 node --test deploy/cloudflare/cdn-worker/worker.test.mjs
 ```
 
-R2·폴백 origin을 메모리 fake로 바꾼 단위 테스트다. Workers Cache·실제 R2 동작은 배포 후 `cf-cache-status`와
-응답으로 확인한다.
+R2·폴백 origin을 메모리 fake로 바꾼 단위 테스트다. 배포 후에는 두 단을 나눠 확인한다.
+
+- 앞단: `https://cdn.laimory.app/<key>` 응답 헤더 `x-cache`(Hit/Miss)·`x-amz-cf-pop`(엣지 위치).
+  `cdn.laimory.app/cdn-cgi/trace`는 CloudFront 캐시를 거치므로 엣지 확인에 쓰지 않는다.
+- Worker: `https://cdn-origin.laimory.app/<key>` 응답과 `cf-cache-status`(Workers Cache). CloudFront가 보낸 요청이
+  어느 Cloudflare 데이터센터에서 처리됐는지는 Cloudflare 분석에서 `cdn-origin.laimory.app` 호스트의 colo로 본다.

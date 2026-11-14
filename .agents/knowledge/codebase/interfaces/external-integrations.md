@@ -117,8 +117,11 @@ R2 primary + S3 bucket 비움이 R2 단독이다. env를 바꾸지 않으면 S3 
 - R2 클라이언트는 `PHOTO_R2_ENDPOINT`·`PHOTO_R2_ACCESS_KEY_ID`·`PHOTO_R2_SECRET_ACCESS_KEY`로 만든 **전용 static
   자격증명**만 쓴다(`R2PhotoBucket`) — AWS 기본 체인에 섞지 않는다. path-style, checksum은 요구될 때만 계산·검증.
   presigned URL은 R2 S3 API 도메인(`<account>.r2.cloudflarestorage.com`)에서만 동작한다(custom domain 불가).
-- R2 서빙은 `cdn.laimory.app` Worker(`deploy/cloudflare/cdn-worker/`)다: R2 binding 우선, 이전 기간에는 R2에 없으면
-  이전 CloudFront에서 가져와 응답하고 R2에 저장(폴백), 엣지 1일 캐시(`s-maxage=86400`)·404 no-store.
+- R2 서빙: `cdn.laimory.app`은 Amazon CloudFront(정액 Free 요금제, DNS-only CNAME)가 받고, 캐시 미스만 origin
+  `cdn-origin.laimory.app`의 Worker(`deploy/cloudflare/cdn-worker/`)로 간다. Worker는 R2 binding 우선, 이전 기간에는
+  R2에 없으면 이전 CloudFront에서 가져와 응답하고 R2에 저장(폴백), 엣지 1일 캐시(`s-maxage=86400`)·404 no-store.
+  CloudFront를 앞에 둔 이유는 Cloudflare Free 프록시가 국내 일부 통신사를 미국 서부 엣지로 보내서다. 서버 설정
+  (`PHOTO_CDN_DOMAIN=cdn.laimory.app`)과 URL 형태는 앞단과 무관하다.
 - DB에 URL이 materialize되는 것은 사진 `photoUrl`뿐이다. 문의 첨부·공지 썸네일은 filename만 저장하고 조회 때
   `PHOTO_CDN_DOMAIN`을 붙이므로 도메인 변경 시 backfill 대상이 아니다.
 
