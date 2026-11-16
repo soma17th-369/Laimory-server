@@ -160,7 +160,7 @@ laimory_aws_ebs_busy_ratio $busy_ratio
 # HELP laimory_aws_photo_replication_dlq_messages Messages waiting in the S3 to R2 photo replication DLQ.
 # TYPE laimory_aws_photo_replication_dlq_messages gauge
 laimory_aws_photo_replication_dlq_messages $replication_dlq
-# HELP laimory_aws_photo_replication_destination_failures_last_5m Failed events the replication Lambda could not deliver to its DLQ in the latest five-minute period.
+# HELP laimory_aws_photo_replication_destination_failures_last_5m Failed events the replication Lambda could not deliver to its DLQ in the latest five-minute period with data (looked back 20 minutes; 0 when none).
 # TYPE laimory_aws_photo_replication_destination_failures_last_5m gauge
 laimory_aws_photo_replication_destination_failures_last_5m $replication_destination_failures
 EOF

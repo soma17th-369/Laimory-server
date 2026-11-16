@@ -118,8 +118,20 @@ PARAM=/laimory/shared/photo-replicator/r2-token
 6. **기존 객체 채우기**: 알림을 켠 **뒤에** 실행해야 그사이 올라온 객체를 놓치지 않는다. 02:00~04:30 KST(탈퇴 파기·draft
    정리·고아 스위퍼)는 피한다 — 복사가 방금 지워진 객체를 되살리지 않게 한다. `sync`는 쓰지 않는다(R2에만 있는 객체를 지운다).
 
+   S3는 SSO 임시 자격증명을, R2는 1번 SSM 토큰을 환경 변수로만 넘긴다(rclone 설정 파일·화면에 남기지 않음). R2 토큰은
+   버킷 하나로 제한돼 버킷 확인·생성 요청이 403이 날 수 있으므로 `--s3-no-check-bucket`을 붙인다.
+
    ```bash
-   rclone copy --ignore-existing s3:<photo bucket> r2:<r2 bucket>
+   TOK=$(aws ssm get-parameter --name "$PARAM" --with-decryption --query Parameter.Value --output text)
+   eval "$(aws configure export-credentials --format env)"
+   export RCLONE_CONFIG_SRC_TYPE=s3 RCLONE_CONFIG_SRC_PROVIDER=AWS RCLONE_CONFIG_SRC_ENV_AUTH=true \
+     RCLONE_CONFIG_SRC_REGION=ap-northeast-2
+   export RCLONE_CONFIG_DST_TYPE=s3 RCLONE_CONFIG_DST_PROVIDER=Cloudflare RCLONE_CONFIG_DST_REGION=auto \
+     RCLONE_CONFIG_DST_ENDPOINT='<r2 s3 endpoint>' \
+     RCLONE_CONFIG_DST_ACCESS_KEY_ID="$(jq -r .access_key_id <<<"$TOK")" \
+     RCLONE_CONFIG_DST_SECRET_ACCESS_KEY="$(jq -r .secret_access_key <<<"$TOK")"
+   unset TOK
+   rclone copy "src:$PHOTO_BUCKET" 'dst:<r2 bucket>' --ignore-existing --s3-no-check-bucket --transfers 8
    ```
 
 ## 확인
