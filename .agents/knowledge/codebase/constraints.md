@@ -40,7 +40,13 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
   `GetSecretValue`를 정확히 1회 호출해 32-byte key·version schema 검증 실패 시 기동을 실패시킨다 —
   이 저장소에서 유일하게 context refresh 중 실 AWS를 호출하는 빈이며(S3 client는 생성 시점 무호출),
   요청 경로 재호출은 없고 rotation 반영은 secret 갱신 + 재기동이다. AWS SDK `secretsmanager` 모듈은
-  기존 BOM으로 버전을 관리한다.
+  기존 BOM으로 버전을 관리한다. `ocivault` 모드(#644, AWS 자격증명이 없는 OCI 인스턴스용)는 instance
+  principal로 OCI Vault `GetSecretBundle`(CURRENT)을 기동 시 정확히 1회 호출하고, 같은 secret JSON 스키마를
+  같은 파서로 검증한다(실패 = 기동 실패, circuit breaker off·재시도 10초 상한). AWS deploy preflight는
+  `secretsmanager` 고정 그대로라 AWS 배포에서는 이 모드를 쓸 수 없다. OCI SDK(`oci-java-sdk-secrets`·
+  `oci-java-sdk-common-httpclient-jersey3`)는 Spring BOM 밖이라 버전을 명시하고, 저장소의 resilience4j 2.x가
+  SDK가 선언한 1.x를 대체하므로 SDK 버전을 올릴 때 loopback 테스트(`OciVaultSubjectHmacKeyConfigTest`)로
+  HTTP·역직렬화 경로를 확인한다.
 - Swagger는 기본 off이고 dev/local에서만 켠다.
 - AI mode는 현재 `noop|fake`뿐이며 production dispatcher가 없다.
 - 기본 profile은 JSON stdout, local docker profile은 text log를 사용한다.

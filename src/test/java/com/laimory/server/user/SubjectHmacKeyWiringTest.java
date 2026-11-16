@@ -34,6 +34,7 @@ class SubjectHmacKeyWiringTest {
             .withUserConfiguration(
                     FixtureSubjectHmacKeyConfig.class,
                     SecretsManagerSubjectHmacKeyConfig.class,
+                    OciVaultSubjectHmacKeyConfig.class,
                     SubjectMappingMetrics.class,
                     SubjectLookupKeyDeriver.class)
             .withBean(MeterRegistry.class, SimpleMeterRegistry::new);
@@ -116,6 +117,18 @@ class SubjectHmacKeyWiringTest {
                         .rootCause()
                         .isInstanceOf(IllegalStateException.class)
                         .hasMessageContaining("APP_SUBJECT_SECRET_ARN"));
+    }
+
+    @Test
+    void ociVaultModeWithBlankSecretIdFailsContext() {
+        // production 기본값(app.subject.oci-secret-id=${APP_SUBJECT_OCI_SECRET_ID:})과 같은 빈 값 경로.
+        runner.withPropertyValues(
+                        "app.subject.mode=ocivault",
+                        "app.subject.oci-secret-id=")
+                .run(context -> assertThat(context).getFailure()
+                        .rootCause()
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("APP_SUBJECT_OCI_SECRET_ID"));
     }
 
     @Test
