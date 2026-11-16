@@ -7,7 +7,7 @@ URL에 붙이고, 앱·관리자 웹·AI는 그 URL을 바로 GET한다.
 
 ```text
 클라이언트 → cdn.laimory.app = Amazon CloudFront (엣지 캐시)
-               └ 캐시 미스 → cdn-origin.laimory.app = 이 Worker → R2 (이전 기간에는 R2에 없으면 폴백)
+               └ 캐시 미스 → cdn-origin.laimory.app = 이 Worker → R2
 ```
 
 `cdn.laimory.app`은 CloudFront 배포를 가리키는 DNS-only CNAME이고, Worker는 Workers custom domain
@@ -21,9 +21,10 @@ CloudFront에서 Worker로 가는 캐시 미스는 Cloudflare 서울 데이터�
 - R2 binding `BUCKET`에서 읽는다. Range·조건부 요청(`If-None-Match` 등)은 R2가 처리한다.
 - 찾은 객체는 `Cache-Control: s-maxage=86400` — 엣지에만 1일, 브라우저 캐시 지시는 없다(이전 CloudFront와 같음).
 - 404는 `no-store`로 캐시하지 않는다.
-- **폴백(S3 → R2 이전 기간 전용)**: R2에 없고 `FALLBACK_ORIGIN`이 설정돼 있으면 그 공개 CDN에서 가져와 응답하고
-  R2에도 저장한다. 이벤트 로그 `{"event":"fallback","status":N}` 1줄로 폴백 횟수를 센다. 이전이 끝나면
-  `FALLBACK_ORIGIN` 바인딩을 빼서 끈다(코드 변경 없음).
+- **폴백(S3 → R2 이전 기간 전용, 현재 꺼짐)**: R2에 없고 `FALLBACK_ORIGIN`이 설정돼 있으면 그 공개 CDN에서 가져와
+  응답하고 R2에도 저장한다(이벤트 로그 `{"event":"fallback","status":N}`). 2026-11-16에 바인딩을 빼서 껐다 — R2의
+  완전성은 S3 → R2 이벤트 복제(`deploy/aws/photo-r2-replicator/`)가 맡고, 폴백은 지운 사진을 이전 CDN 캐시에서 R2로
+  되살릴 수 있어서다. 코드는 Worker를 정리할 때 함께 지운다.
 - key(=subject 해시가 든 경로)는 로그에 남기지 않는다 — invocation log는 끄고 위 이벤트만 남긴다.
 
 ## 배포 (수동, Cloudflare MCP 또는 API)
@@ -36,8 +37,7 @@ CloudFront에서 Worker로 가는 캐시 미스는 Cloudflare 서울 데이터�
   "main_module": "worker.js",
   "compatibility_date": "<배포일>",
   "bindings": [
-    { "type": "r2_bucket", "name": "BUCKET", "bucket_name": "<R2 bucket>" },
-    { "type": "plain_text", "name": "FALLBACK_ORIGIN", "text": "<이전 CDN 도메인>" }
+    { "type": "r2_bucket", "name": "BUCKET", "bucket_name": "<R2 bucket>" }
   ],
   "cache_options": { "enabled": true },
   "observability": { "enabled": true, "logs": { "enabled": true, "invocation_logs": false } }

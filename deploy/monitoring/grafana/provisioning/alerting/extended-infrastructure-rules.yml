@@ -182,3 +182,119 @@ groups:
           service: laimory
           severity: critical
         isPaused: false
+
+      - uid: laimory_photo_replication_dlq_not_empty
+        title: S3 to R2 photo replication failed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'laimory_aws_photo_replication_dlq_messages{job="node",environment="dev",host="monitoring"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: 'S3 to R2 photo replication left events in the DLQ.'
+          description: 'A failed create leaves a photo missing in R2; a failed delete leaves an erased photo in R2. Reprocess the DLQ within the five-day erasure deadline.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/aws/photo-r2-replicator/README.md#실패-이벤트-재처리
+        labels:
+          environment: dev
+          host: monitoring
+          job: node
+          service: laimory
+          severity: critical
+        isPaused: false
+
+      - uid: laimory_photo_replication_events_lost
+        title: S3 to R2 photo replication events lost
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 1800, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'laimory_aws_photo_replication_destination_failures_last_5m{job="node",environment="dev",host="monitoring"}'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: 'The photo replication Lambda could not deliver failed events to its DLQ.'
+          description: 'Those events are lost. Compare the S3 and R2 object lists and fix the missing copies or leftover deletions by hand.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/aws/photo-r2-replicator/README.md#실패-이벤트-재처리
+        labels:
+          environment: dev
+          host: monitoring
+          job: node
+          service: laimory
+          severity: critical
+        isPaused: false
