@@ -346,8 +346,7 @@ loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker netwo
 
 node_exporter는 monitoring, dev WAS, test WAS(#400), dev MySQL, Redis, ELK와 **prod WAS 2대·prod MySQL**의 private
 interface:9100에만 bind하는 systemd service다. pinned release archive SHA를 검증한다. textfile collector는
-root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS(+ 임시로 S3 → R2 사진 복제의
-DLQ 적재·DLQ 전달 실패, #647 — 복제 정리 때 함께 제거)와 1분
+root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS와 1분
 Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
 무트래픽과 장애를 구분할 수 없어 alert하지 않는다. central mysqld exporter는 dev MySQL의 IP-scoped USAGE-only 계정으로 global
 status/variables만 읽는다. Redis exporter ACL은 INFO/PING/CLIENT SETNAME만 허용하고 key pattern,
