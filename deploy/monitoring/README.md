@@ -12,11 +12,11 @@ Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev mo
 - Grafana: Prometheus metrics, read-only Elasticsearch log datasource(`laimory-*` wildcard)와 Tempo trace datasource
 - blackbox exporter: public dev HTTPS `/status`를 60초마다 확인
 - node_exporter: monitoring, dev WAS, test WAS, dev MySQL, Redis, ELK와 prod WAS 2대·prod MySQL의 private IP:9100
-- textfile collector: monitoring의 CloudWatch/Elasticsearch와 WAS(dev·prod)의 Filebeat self-metric
+- textfile collector: monitoring의 CloudWatch/Elasticsearch/Upstash 월 사용량과 WAS(dev·prod)의 Filebeat self-metric
 - central exporter: USAGE-only dev MySQL 계정과 INFO/PING-only Redis ACL 계정
 - dashboard: `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs`
 - alert: target/probe/TLS, HTTP 오류·지연, stuck task, JVM/Hikari, host disk/memory/OOM,
-  MySQL/Redis, AWS credit 수집, log pipeline, Prometheus self-health
+  MySQL/Redis, AWS credit 수집, Upstash 월 사용량, log pipeline, Prometheus self-health
 - notification: Grafana native Discord contact point, firing과 resolved 모두 전송
 
 Grafana 3000은 loopback에만, Tempo OTLP 4317은 monitoring private IP에만
@@ -256,7 +256,8 @@ alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 �
   `laimory_datastore_backend_down`), 공개된 도메인이 있어야 성립하는 probe 계열
   (`laimory_https_probe_failed`, `laimory_tls_expiry_*`), 그리고 환경 공유 자산인
   Elasticsearch의 수집기·클러스터 상태를 monitoring host로 고정해 읽는
-  `laimory_elasticsearch_unhealthy`. 이들은 `environment="dev"` 셀렉터를 유지한다.
+  `laimory_elasticsearch_unhealthy`, 외부 Upstash의 월 사용량을 monitoring host 수집기로 읽는
+  `laimory_upstash_usage_high`·`laimory_upstash_collection_unhealthy`. 이들은 `environment="dev"` 셀렉터를 유지한다.
   log pipeline 계열(`laimory_log_pipeline_unhealthy`, `laimory_filebeat_output_failures`)과
   wildcard index를 environment terms로 나눠 평가하는 `laimory_application_error_log`는
   환경 중립이다.
@@ -313,10 +314,13 @@ Grafana, mysqld exporter, redis exporter는 `restart: on-failure`로 process 장
 | `discord_webhook_url` | `472:0` | 지정 Discord channel incoming webhook URL |
 | `mysql_exporter_my.cnf` | `65534:0` | exporter 전용 `[client]` credential |
 | `redis_exporter_password.json` | `59000:59000` | exporter URI별 password JSON |
+| `upstash_api_credentials` | `0:0` | `<Upstash 계정 email>:<Developer API read-only key>` 한 줄 (#653) |
 
 parent directory는 `0700 root:root`, 각 파일은 `0400`이다. systemd는
 `scripts/validate-secrets.sh`로 여섯 파일의 non-empty/owner/mode를 모두 확인하므로 일부만 준비된
 stack은 시작하지 않는다. 비밀이 없는 Prometheus와 blackbox만 먼저 기동할 수 있다.
+`upstash_api_credentials`는 docker stack이 아니라 root collector만 읽으므로 이 검사 대상이 아니다
+(설치는 아래 "Upstash usage collector").
 
 SSM Session Manager로 monitoring host에 접속한 뒤 stdin 전용 helper로 주입한다.
 
@@ -794,6 +798,51 @@ curl -fsS "http://$(hostname -I | awk '{print $1}'):9100/metrics" |
   grep '^laimory_filebeat_'
 ```
 
+## Upstash usage collector
+
+Upstash Redis는 무료 플랜(월 50만 명령)을 유지한다. 무료 플랜에는 사용량 알림과 Prometheus 연동이 없으므로
+`laimory-upstash-metrics.timer`가 5분마다 Developer API `GET /v2/redis/stats/{id}`의
+`total_monthly_requests`를 `laimory_upstash_monthly_requests`로 노출한다(#653). Developer API 조회는
+Redis 명령이 아니어서 한도를 소비하지 않는다. credentials 파일이 비어 있으면 service의 `ExecCondition`이
+수집을 건너뛰고, 그동안 `laimory_upstash_collection_unhealthy`가 firing한다 — secret과 database ID를 먼저
+넣고 timer를 켠다.
+
+1. Upstash Console → Account → Developer API에서 **Read Only** key를 발급한다.
+2. 운영자 로컬에서 "Existing live rollout"의 S3 업로드 loop로 아래 ASSETS 네 파일을 bootstrap key에 올린다.
+3. monitoring host SSM 세션에서 파일을 받은 뒤(새 secret 이름을 아는 `install-secret.sh`가 먼저 필요하다)
+   key를 화면에 남기지 않고 주입한다. database ID는 secret이 아니지만 공개 저장소에 두지 않고 host `.env`에만 둔다.
+
+```bash
+cd /opt/laimory-monitoring
+BACKUP_BUCKET='<backup bucket>'
+BASE="s3://$BACKUP_BUCKET/bootstrap/monitoring"
+while IFS='|' read -r source destination; do
+  sudo aws s3 cp "$BASE/$source" "$destination" \
+    --region ap-northeast-2 --only-show-errors
+done <<'ASSETS'
+scripts/install-secret.sh|/opt/laimory-monitoring/scripts/install-secret.sh
+scripts/collect-upstash-metrics.sh|/opt/laimory-monitoring/scripts/collect-upstash-metrics.sh
+systemd/laimory-upstash-metrics.service|/etc/systemd/system/laimory-upstash-metrics.service
+systemd/laimory-upstash-metrics.timer|/etc/systemd/system/laimory-upstash-metrics.timer
+ASSETS
+sudo chmod 0750 scripts/install-secret.sh scripts/collect-upstash-metrics.sh
+sudo chmod 0644 /etc/systemd/system/laimory-upstash-metrics.*
+
+read -rp 'Upstash account email: ' UPSTASH_EMAIL
+read -rsp 'Upstash read-only API key: ' UPSTASH_KEY; echo
+printf '%s:%s' "$UPSTASH_EMAIL" "$UPSTASH_KEY" | sudo scripts/install-secret.sh upstash_api_credentials
+unset UPSTASH_EMAIL UPSTASH_KEY
+read -rp 'Upstash database ID: ' UPSTASH_DB_ID
+grep -q '^UPSTASH_REDIS_DATABASE_ID=' .env ||
+  printf 'UPSTASH_REDIS_DATABASE_ID=%s\n' "$UPSTASH_DB_ID" | sudo tee -a .env >/dev/null
+unset UPSTASH_DB_ID
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now laimory-upstash-metrics.timer
+sudo systemctl start laimory-upstash-metrics.service
+curl -fsS "http://$(hostname -I | awk '{print $1}'):9100/metrics" | grep '^laimory_upstash_'
+```
+
 ## prod MySQL backup
 
 prod MySQL은 관리형이 아니라 백업이 저절로 생기지 않는다(AWS Backup은 조직 SCP로 거부 —
@@ -1174,6 +1223,15 @@ object key를 로그에 복사하지 않는다. 설정 변경은 [orphan 스위�
 따른다. monitoring 자산 변경은 앱 자동 배포에 포함되지 않으므로 기존 provisioning 파일을 백업한 뒤 자산을 반영하고
 Grafana provisioning reload/restart 절차를 따른다.
 
+### Upstash usage
+
+`laimory_upstash_usage_high`는 이번 달 Upstash 명령 수가 무료 한도 50만의 70%를 넘었다는 뜻이다. 플랜은
+올리지 않는다. Upstash Console의 command 통계로 많이 쓰는 명령을 찾고, 앱에서는 인증 요청마다 읽는
+`user:active` 캐시와 initializer 캐시(약관·설정·팝업) 읽기를 먼저 줄인다. 월이 바뀌어 수치가 초기화되면
+resolved된다. `laimory_upstash_collection_unhealthy`는 `systemctl status laimory-upstash-metrics.service`와
+journal, credentials 파일, `.env`의 `UPSTASH_REDIS_DATABASE_ID`, Developer API 접근 순으로 본다. key를
+read-write로 바꾸지 않는다.
+
 ### AWS metric collection
 
 `systemctl status laimory-aws-metrics.service`와 journal을 확인하고 IMDSv2, AWS CLI,
@@ -1237,12 +1295,12 @@ sudo docker compose restart grafana
 
 # monitoring host — collector 정리와 기존 node_exporter unit 복원
 sudo systemctl disable --now \
-  laimory-aws-metrics.timer laimory-elasticsearch-metrics.timer
+  laimory-aws-metrics.timer laimory-elasticsearch-metrics.timer laimory-upstash-metrics.timer
 sudo systemctl stop \
   laimory-aws-metrics.service laimory-elasticsearch-metrics.service
 sudo rm -f /etc/systemd/system/laimory-{aws,elasticsearch}-metrics.{service,timer}
 sudo rm -f /opt/laimory-monitoring/scripts/collect-{aws,elasticsearch}-metrics.sh
-sudo rm -f /var/lib/node_exporter/textfile_collector/laimory_{aws,elasticsearch}.prom
+sudo rm -f /var/lib/node_exporter/textfile_collector/laimory_{aws,elasticsearch,upstash}.prom
 sudo install -m 0644 "$ROLLBACK_DIR/node_exporter.service" \
   /etc/systemd/system/node_exporter.service
 sudo systemctl daemon-reload
