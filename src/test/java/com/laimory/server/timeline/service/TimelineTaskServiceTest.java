@@ -151,26 +151,4 @@ class TimelineTaskServiceTest {
 
         assertThat(service.findProcessingTaskIds(SUBJECT_ID)).containsExactly("newer", "older");
     }
-
-    @Test
-    void countStuckProcessing_usesProcessingTtl() {
-        Instant now = Instant.parse("2026-07-24T12:00:00Z");
-        Duration threshold = Duration.ofSeconds(90);
-        when(timelineTaskStore.countStuckProcessing(
-                now, threshold, Duration.ofMinutes(5))).thenReturn(2L);
-
-        assertThat(service.countStuckProcessing(now, threshold)).isEqualTo(2L);
-    }
-
-    @Test
-    void countStuckProcessing_rejectsThresholdOutsideProcessingWindow() {
-        // 0·음수·PROCESSING TTL(5m) 이상은 거부한다(90s는 위 테스트에서 허용 확인).
-        assertThatThrownBy(() -> service.countStuckProcessing(STARTED_AT, Duration.ZERO))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.countStuckProcessing(STARTED_AT, Duration.ofSeconds(-1)))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> service.countStuckProcessing(STARTED_AT, Duration.ofMinutes(5)))
-                .isInstanceOf(IllegalArgumentException.class);
-        verify(timelineTaskStore, never()).countStuckProcessing(any(), any(), any());
-    }
 }

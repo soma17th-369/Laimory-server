@@ -262,9 +262,6 @@ Spring JSON stdout
   - `laimory.timeline.draft.creation`: PROCESSING task 저장 성공 수
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
-  - `laimory.timeline.task.processing.stuck`: 90초 초과, PROCESSING TTL(5분) 만료 전인 PROCESSING task 수 — 보통은
-    처리 기한(3분)의 유실 처리가 FAILED로 종결해 빠지고, 유실 처리가 없거나 건너뛴 task(만료 알림 유실, 기록 소비 뒤
-    callback 없음)는 5분까지 남는다
   - `laimory.credit.history.charged.stale`: 1시간 넘게 `CHARGED`인 크레딧 기록 수(#582) — 유실 환불이 놓친 건.
     DB count를 scrape마다가 아니라 5분에 한 번만 다시 세고, DB 오류는 NaN이다. 모든 서버가 같은 값을 내므로
     경보는 `max by (environment)`로 환경당 하나만 만든다
@@ -401,7 +398,7 @@ publish하며, 같은 SHA 재시도는 기존 bytes가 같을 때만 성공한�
 지우며 reload 또는 UID 확인 실패 시 이전 파일과 새 UID를 함께 복구한다.
 rule은 환경 중립과 환경 고정 둘로 나뉘고, 기준은 **그 rule이 읽는 시계열이 환경마다 존재하는지**다.
 환경 중립 rule(5xx 비율, p95 지연, JVM heap, Hikari, target down, host memory, filesystem,
-OOM kill, PROCESSING stuck)은 PromQL에 `environment` 셀렉터를 두지 않고 집계 `by (...)`와 조인
+OOM kill, credit CHARGED stale)은 PromQL에 `environment` 셀렉터를 두지 않고 집계 `by (...)`와 조인
 `on (...)`에 `environment`를 넣어 환경마다 별개 alert instance를 만들며, `environment` 라벨을
 선언하지 않는다 — Grafana가 조건 쿼리 결과의 라벨을 alert instance 라벨로 넘기므로 그대로 흐르고,
 커스텀 라벨을 두면 쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 나머지 rule은 그 환경에만 있는

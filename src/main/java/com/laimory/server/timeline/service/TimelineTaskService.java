@@ -142,13 +142,4 @@ public class TimelineTaskService {
     public List<String> findProcessingTaskIds(UUID subjectId) {
         return timelineTaskStore.findProcessingTaskIds(subjectId);
     }
-
-    long countStuckProcessing(Instant now, Duration stuckAfter) {
-        if (stuckAfter.isZero() || stuckAfter.isNegative()
-                || stuckAfter.compareTo(PROCESSING_TTL) >= 0) {
-            throw new IllegalArgumentException(
-                    "stuck threshold는 0보다 크고 PROCESSING TTL보다 짧아야 합니다: " + stuckAfter);
-        }
-        return timelineTaskStore.countStuckProcessing(now, stuckAfter, PROCESSING_TTL);
-    }
 }

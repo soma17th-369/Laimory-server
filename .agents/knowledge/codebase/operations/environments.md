@@ -157,7 +157,7 @@ application 배포·health gate 의존성이 아니다.
   docker 금지 가드가 이를 이중으로 막는다.
   docker의 `app.subject.fixture-key`는 checked-in deterministic 값으로 보호 대상 secret이 아니다
 - `SWAGGER_ENABLED`
-- `APP_COMMIT_SHA`(비밀 아님, dev deploy image SHA), `TIMELINE_STUCK_AFTER`
+- `APP_COMMIT_SHA`(비밀 아님, dev deploy image SHA)
 - `AWS_REGION`, S3/CDN and photo upload limit names
 - 사진 저장소 선택(#642): `PHOTO_STORAGE_PRIMARY`(`s3` 기본 | `r2`), R2 `PHOTO_R2_ENDPOINT`·`PHOTO_R2_BUCKET`·
   `PHOTO_R2_ACCESS_KEY_ID`·`PHOTO_R2_SECRET_ACCESS_KEY`. R2 키는 AWS 표준 이름(`AWS_ACCESS_KEY_ID` 등)을 쓰지 않는다 —
