@@ -8,7 +8,6 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -25,8 +24,7 @@ import org.springframework.stereotype.Component;
  * (sorted set — member: taskId, score: processingStartedAt epoch ms).
  * 환경 prefix(dev_ 등) 부착은 {@link RedisGateway}가 담당한다.
  *
- * <p><b>불변식:</b> task JSON의 status/owner가 유일한 권위다. 전역/사용자 index는 각각 관측·조회
- * 후보일 뿐이며 단독으로 상태나 응답을 만들지 않는다. 서버간 stage 전이는 native {@code SET XX KEEPTTL},
+ * <p><b>불변식:</b> task JSON의 status/owner가 유일한 권위다. 사용자 index는 조회 후보일 뿐이며 단독으로 상태나 응답을 만들지 않는다. 서버간 stage 전이는 native {@code SET XX KEEPTTL},
  * callback terminal 전이는 native {@code SET XX PX}로 저장한다 — key 존재 여부만 보고 기존 값은
  * 비교하지 않으므로(expected-value CAS 아님) 잘못된 요청 차단은 write 전 token/status/stage 검증이
  * 담당한다. processing index는 최초 PROCESSING 저장과 terminal 전이에서만 native command로 갱신하며,
@@ -38,11 +36,9 @@ import org.springframework.stereotype.Component;
 public class TimelineTaskStore {
 
     private static final String KEY_PREFIX = "timeline:draft-task:";
-    static final String PROCESSING_INDEX_KEY = "timeline:draft-task:processing-index";
     private static final String USER_PROCESSING_INDEX_KEY_PREFIX = "timeline:draft-task:user:";
     private static final String USER_PROCESSING_INDEX_KEY_SUFFIX = ":processing";
     private static final String INDEX_REPAIR_METRIC = "laimory.timeline.task.index.repair";
-    private static final String GLOBAL_INDEX = "global";
     private static final String USER_INDEX = "user";
     private final RedisGateway redis;
     private final ObjectMapper objectMapper;
@@ -92,7 +88,7 @@ public class TimelineTaskStore {
 
     /**
      * task를 terminal(SUCCESS/FAILED)로 교체한다. native {@code SET XX PX}라 만료된 task를 부활시키지
-     * 않고, write가 성공한 뒤에만 두 processing index에서 member를 제거한다.
+     * 않고, write가 성공한 뒤에만 사용자 processing index에서 member를 제거한다.
      * 반환 {@code false}는 write 시점에 task key가 없다는 뜻(만료)이다.
      */
     public boolean saveTerminalIfPresent(String taskId, TimelineDraftTask terminal, Duration ttl) {
@@ -119,8 +115,6 @@ public class TimelineTaskStore {
     private void registerProcessingIndexes(String taskId, TimelineDraftTask task, Duration ttl) {
         String userIndexKey = subjectProcessingIndexKey(task.subjectId());
         long score = task.processingStartedAt().toEpochMilli();
-        runIndexCommand(GLOBAL_INDEX, "add",
-                () -> redis.addToSortedSet(PROCESSING_INDEX_KEY, taskId, score));
         runIndexCommand(USER_INDEX, "add",
                 () -> redis.addToSortedSet(userIndexKey, taskId, score));
         try {
@@ -142,8 +136,6 @@ public class TimelineTaskStore {
     }
 
     private void removeProcessingIndexes(String taskId, UUID subjectId) {
-        runIndexCommand(GLOBAL_INDEX, "remove",
-                () -> redis.removeFromSortedSet(PROCESSING_INDEX_KEY, List.of(taskId)));
         runIndexCommand(USER_INDEX, "remove",
                 () -> redis.removeFromSortedSet(subjectProcessingIndexKey(subjectId), List.of(taskId)));
     }
@@ -250,15 +242,5 @@ public class TimelineTaskStore {
         } catch (RuntimeException e) {
             log.warn("draft task user index stale member cleanup failed: staleCount={}", staleMembers.size(), e);
         }
-    }
-
-    /**
-     * task TTL 밖의 고아 PROCESSING index를 정리하고, 아직 유효하지만 threshold를 넘긴 작업 수를 센다.
-     * task JSON이 권위 원천이며 이 index는 운영 관측만 위한 보조 자료다.
-     */
-    public long countStuckProcessing(Instant now, Duration stuckAfter, Duration processingTtl) {
-        long nowMillis = now.toEpochMilli();
-        redis.pruneSortedSetByScore(PROCESSING_INDEX_KEY, nowMillis - processingTtl.toMillis());
-        return redis.countSortedSetByScore(PROCESSING_INDEX_KEY, nowMillis - stuckAfter.toMillis());
     }
 }

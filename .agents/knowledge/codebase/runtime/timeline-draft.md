@@ -77,13 +77,15 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    보상 삭제하고 차감을 환불(`TASK_SAVE_FAILED`)한 뒤 타이머를 지운다 — 환불이 실패하면 타이머를 남겨 만료가 다시
    환불한다. 그다음 DailyRecord를 실패 draft 정리(아래 "실패 draft 정리")로 soft delete하며, 정리 실패는 로그만 남기고
    원래 예외를 전파한다.
-   task JSON 저장 뒤 관측 전용 전역 PROCESSING index와 사용자별 진행 작업 index
+   task JSON 저장 뒤 사용자별 진행 작업 index
    (`timeline:draft-task:user:{canonicalUuid(subjectId)}:processing`)를 native Redis 명령으로 갱신한다.
-   **최초 PROCESSING 생성만** 두 index에 시작 시각 score로 taskId를 ZADD하고 subject index key TTL을
-   PROCESSING TTL로 걸며, terminal 전이만 두 index에서 ZREM한다 — 중간 stage write는 index에 어떤
-   명령도 보내지 않는다. 각 index 명령 실패·PEXPIRE=false는 task를 다시 읽지 않고 같은 의도의 명령을
-   한 번 재시도한다(두 번째 실패는 metric·warn 관측만). 전역 index는 90초 초과 stuck gauge에만,
-   사용자 index는 진행 작업 목록 조회의 후보에만 쓰며 task 상태·소유권·callback 계약의 권위는 JSON이다.
+   **최초 PROCESSING 생성만** index에 시작 시각 score로 taskId를 ZADD하고 key TTL을
+   PROCESSING TTL로 걸며, terminal 전이만 index에서 ZREM한다 — 중간 stage write는 index에 어떤
+   명령도 보내지 않는다. index 명령 실패·PEXPIRE=false는 task를 다시 읽지 않고 같은 의도의 명령을
+   한 번 재시도한다(두 번째 실패는 metric·warn 관측만). index는 진행 작업 목록 조회의 후보에만 쓰며
+   task 상태·소유권·callback 계약의 권위는 JSON이다. 멈춘 task 관측용 Redis index·gauge는 두지 않는다 —
+   처리 기한 유실 처리의 TIMEOUT 실패는 `laimory_ai_failure_recent`가, 유실 처리마저 놓친 건
+   `laimory_credit_stale_charged`가 잡는다(둘 다 DB 기반).
 8. AI dispatcher를 호출한다 — body는 `taskId`·`taskToken`·`dailyRecordId`·offset `window`이며,
    기존 데이터 필드와 window 포맷을 유지한다. source item은 싣지 않는다
    (계약 상세는 [ai-contract](../interfaces/ai-contract.md)). 접수(202) 확인까지 동기이며(AgentCore 대기 상한

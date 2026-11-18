@@ -15,7 +15,7 @@ Prometheus, Grafana, blackbox exporter와 MySQL/Redis exporter를 private dev mo
 - textfile collector: monitoring의 CloudWatch/Elasticsearch/Upstash 월 사용량과 WAS(dev·prod)의 Filebeat self-metric
 - central exporter: USAGE-only dev MySQL 계정과 INFO/PING-only Redis ACL 계정
 - dashboard: `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs`
-- alert: target/probe/TLS, HTTP 오류·지연, stuck task, JVM/Hikari, host disk/memory/OOM,
+- alert: target/probe/TLS, HTTP 오류·지연, JVM/Hikari, host disk/memory/OOM,
   MySQL/Redis, AWS credit 수집, Upstash 월 사용량, log pipeline, Prometheus self-health
 - notification: Grafana native Discord contact point, firing과 resolved 모두 전송
 
@@ -239,9 +239,9 @@ UID를 함께 복구한다. 성공하면 적용 release URI를 `grafana/alert-ru
 
 alert rule은 두 부류다. 어느 쪽인지는 **rule이 읽는 시계열이 환경마다 존재하는지**로 갈린다.
 
-- **환경 중립 10개** — `laimory_http_5xx_high`, `laimory_http_p95_high`, `laimory_jvm_heap_high`,
+- **환경 중립 9개** — `laimory_http_5xx_high`, `laimory_http_p95_high`, `laimory_jvm_heap_high`,
   `laimory_hikari_saturated`, `laimory_target_down`, `laimory_host_memory_low`,
-  `laimory_filesystem_low`, `laimory_host_oom_kill`, `laimory_processing_stuck`, `laimory_credit_stale_charged`.
+  `laimory_filesystem_low`, `laimory_host_oom_kill`, `laimory_credit_stale_charged`.
   PromQL에 환경을 고정하지 않고 집계 `by (...)`와 조인 `on (...)`에 `environment`를 넣어
   환경마다 별개 alert instance가 나오게 한다. 단 **`environment!="test"`는 공통 제외다(#400)** —
   test는 부하 실험용 sandbox라 p95 급등·인스턴스 정지가 by-design이고(정지 운용이 기본),
@@ -1125,23 +1125,6 @@ disk alert에서 제외된다. 일반 host는 `MemAvailable < 15%`, filesystem c
 swap activity와 OOM 이력을 함께 확인하고, 실제 reclaim 실패나 OOM 징후 없이 cache만 큰 경우에는 스펙
 증설 근거로 단독 사용하지 않는다. collector/cardinality를 줄여도 monitoring medium의 memory 75%가
 지속되면 별도 resize 변경을 검토한다.
-
-### Timeline PROCESSING stuck
-
-Overview의 stuck count와 Timeline workflow/callback, Redis target 상태를 함께 본다. 이 값은 90초를 넘고
-PROCESSING TTL(5분) 만료 전인 PROCESSING task만 센다. gauge 조회가 만료 구간(`score <= now-5m`) member를 index에서
-먼저 제거하고, task JSON 저장과 보조 sorted-set index 갱신은 원자적이며 terminal 전이 때 index에서
-제거된다. 결과·실패 보고가 없는 task는 처리 기한(3분)의 유실 처리가 FAILED로 종결해 빠지므로 경보 창은 보통
-90초(90s~3m)이고, 유실 처리가 없거나 건너뛴 task(만료 알림 유실, 기록 소비 뒤 callback 없음)만 5분까지 잡힌다.
-창이 짧아 stuck rule은 전용 30초 group(`laimory-lifecycle-stuck`)에서
-pending 없이(`for: 0s`) 즉시 발화한다 — resolve도 그만큼 빠르므로 지나간 발화는 Grafana alert
-history로 확인한다.
-
-draft POST가 dispatch 실패 502(-1009)를 반환한 경우에도 접수 여부 불명(UNKNOWN)이면 기존 PROCESSING
-task가 남아 stuck에 잡힐 수 있다 — 3분 안에 AI callback이 오면 terminal로 빠지고, 보고 없이 처리 기한(3분)이
-지나면 유실 처리가 환불하고 FAILED(-1008)로 종결한다. 유실 처리마저 없으면 5분에 FAILED 전이 없이 사라져 이후
-폴링·콜백은 404(-1001)다. Redis 장애 시 gauge는 NaN이 되고 별도 Redis
-target alert가 원인을 알린다. index는 관측 전용이므로 task 상태를 수동 수정해 alert를 끄지 않는다.
 
 ### Credit CHARGED stale
 

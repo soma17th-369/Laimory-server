@@ -301,9 +301,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 처리 기한(`PROCESSING_DEADLINE`)은 3분이고 task key 수명인 `PROCESSING` TTL(`PROCESSING_TTL`)은 5분이다(#593).
   처리 기한은 유실 타이머 TTL이며 AI 접수 대기 상한(HTTP dispatcher connect+read 합·AgentCore `apiCallTimeout`)은
   그 절반 미만이어야 기동한다(fail-fast). PROCESSING TTL은 최초 PROCESSING 저장 기준 절대값이며 처리 기한보다 길어야
-  유실 처리가 task를 읽는다 — task key, 전역 processing index·사용자별 진행 작업 index의 TTL/prune 창, stuck 지표
-  (`stuck-after`는 0 초과·5분 미만)가 이 값을 쓴다. token/stage 교체는 `KEEPTTL`이라 만료
-  시각을 연장하지 않으며, 폴링 `elapsedSeconds`·stuck 관측·task 만료가 전부 최초 `processingStartedAt`
+  유실 처리가 task를 읽는다 — task key와 사용자별 진행 작업 index의 TTL/prune 창이 이 값을 쓴다. token/stage 교체는
+  `KEEPTTL`이라 만료 시각을 연장하지 않으며, 폴링 `elapsedSeconds`·task 만료가 전부 최초 `processingStartedAt`
   기준으로 일치한다. terminal task TTL은 24시간, staging retention은 7일이다.
 - Redis와 MySQL은 분산 transaction으로 묶지 않는다. commit 뒤 응답 유실은 재시도 창 안의 재요청이
   복구하지만, 선점 뒤 **commit 전** 프로세스 종료는 stage가 `RESULT_PENDING`에 머물러 복구되지 않고 창 만료 뒤
