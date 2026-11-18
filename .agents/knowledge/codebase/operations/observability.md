@@ -262,9 +262,6 @@ Spring JSON stdout
   - `laimory.timeline.draft.creation`: PROCESSING task 저장 성공 수
   - `laimory.timeline.task.terminal{result=success|failed}`: terminal task 저장 성공 수
   - `laimory.timeline.callback.duration`: callback handler 전체 처리 시간
-  - `laimory.timeline.task.processing.stuck`: 90초 초과, PROCESSING TTL(5분) 만료 전인 PROCESSING task 수 — 보통은
-    처리 기한(3분)의 유실 처리가 FAILED로 종결해 빠지고, 유실 처리가 없거나 건너뛴 task(만료 알림 유실, 기록 소비 뒤
-    callback 없음)는 5분까지 남는다
   - `laimory.credit.history.charged.stale`: 1시간 넘게 `CHARGED`인 크레딧 기록 수(#582) — 유실 환불이 놓친 건.
     DB count를 scrape마다가 아니라 5분에 한 번만 다시 세고, DB 오류는 NaN이다. 모든 서버가 같은 값을 내므로
     경보는 `max by (environment)`로 환경당 하나만 만든다
@@ -346,9 +343,8 @@ loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker netwo
 
 node_exporter는 monitoring, dev WAS, test WAS(#400), dev MySQL, Redis, ELK와 **prod WAS 2대·prod MySQL**의 private
 interface:9100에만 bind하는 systemd service다. pinned release archive SHA를 검증한다. textfile collector는
-root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS(+ 임시로 S3 → R2 사진 복제의
-DLQ 적재·DLQ 전달 실패, #647 — 복제 정리 때 함께 제거)와 1분
-Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
+root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS, 5분 Upstash Redis
+월 누적 명령 수(#653)와 1분 Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
 무트래픽과 장애를 구분할 수 없어 alert하지 않는다. central mysqld exporter는 dev MySQL의 IP-scoped USAGE-only 계정으로 global
 status/variables만 읽는다. Redis exporter ACL은 INFO/PING/CLIENT SETNAME만 허용하고 key pattern,
 GET/SCAN/EVAL/SLOWLOG와 mutation을 허용하지 않는다.
@@ -402,13 +398,13 @@ publish하며, 같은 SHA 재시도는 기존 bytes가 같을 때만 성공한�
 지우며 reload 또는 UID 확인 실패 시 이전 파일과 새 UID를 함께 복구한다.
 rule은 환경 중립과 환경 고정 둘로 나뉘고, 기준은 **그 rule이 읽는 시계열이 환경마다 존재하는지**다.
 환경 중립 rule(5xx 비율, p95 지연, JVM heap, Hikari, target down, host memory, filesystem,
-OOM kill, PROCESSING stuck)은 PromQL에 `environment` 셀렉터를 두지 않고 집계 `by (...)`와 조인
+OOM kill, credit CHARGED stale)은 PromQL에 `environment` 셀렉터를 두지 않고 집계 `by (...)`와 조인
 `on (...)`에 `environment`를 넣어 환경마다 별개 alert instance를 만들며, `environment` 라벨을
 선언하지 않는다 — Grafana가 조건 쿼리 결과의 라벨을 alert instance 라벨로 넘기므로 그대로 흐르고,
 커스텀 라벨을 두면 쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 나머지 rule은 그 환경에만 있는
 자산(dev/monitoring 전용 exporter·수집기, 공개 도메인 probe, 환경 공유 자산인 Elasticsearch의
-monitoring host 수집기를 읽는 `laimory_elasticsearch_unhealthy`)을 읽으므로 `environment="dev"`를
-유지한다. log pipeline 계열은 환경 중립이다 — Filebeat stats 수집기는 dev·prod WAS 전체에 설치되고,
+monitoring host 수집기를 읽는 `laimory_elasticsearch_unhealthy`, 외부 Upstash의 월 사용량을 monitoring
+host 수집기로 읽는 `laimory_upstash_*`)을 읽으므로 `environment="dev"`를 유지한다. log pipeline 계열은 환경 중립이다 — Filebeat stats 수집기는 dev·prod WAS 전체에 설치되고,
 `laimory_application_error_log`는 wildcard index(`laimory-*`)를 environment terms(마지막 date
 histogram 앞)로 나눠 환경별 alert instance를 만든다. `or`로 분기를 잇는 rule은 각 분기를
 `((1 - metric) > 0)`처럼 필터링해야 한다 — 필터 없는 선행 분기의 값 0 시계열이 동일 라벨셋의 후행
@@ -419,6 +415,9 @@ backup timer가 쓰는 textfile 시계열만 읽는 환경 고정 rule이다 —
 notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
 `notify_once="true"` label rule은 `repeat_interval`이 매우 긴 전용 route를 타 firing 동안 재발송하지 않고,
 resolved 뒤 다시 firing하면 새로 알린다(#617).
+Upstash Redis는 무료 플랜(월 50만 명령)을 유지하고 pay-as-you-go로 넘기지 않는다 — 무료 플랜에는 자체 알림·Prometheus
+연동이 없어 monitoring host 수집기가 Developer API(read-only key)의 월 누적 명령 수를 읽고, 70% 초과를
+`notify_once`로 한 번 알린다(월이 바뀌어 수치가 초기화되면 resolved). 대응은 한도 상향이 아니라 Redis 명령 감축이다(#653).
 `notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
 대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
 일반 host memory는

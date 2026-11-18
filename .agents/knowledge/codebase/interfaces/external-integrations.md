@@ -119,16 +119,16 @@ R2 primary + S3 bucket 비움이 R2 단독이다. env를 바꾸지 않으면 S3 
   presigned URL은 R2 S3 API 도메인(`<account>.r2.cloudflarestorage.com`)에서만 동작한다(custom domain 불가).
 - R2 서빙: `cdn.laimory.app`은 Amazon CloudFront(정액 Free 요금제, DNS-only CNAME)가 받고, 캐시 미스만 origin
   `cdn-origin.laimory.app`의 Worker(`deploy/cloudflare/cdn-worker/`)로 간다. Worker는 R2 binding에서만 읽고(이전
-  CloudFront 폴백은 2026-11-16에 껐다 — 아래 복제 항목), 엣지 1일 캐시(`s-maxage=86400`)·404 no-store.
+  CloudFront 폴백은 2026-11-16에 껐다 — 아래 운영 상태), 엣지 1일 캐시(`s-maxage=86400`)·404 no-store.
   CloudFront를 앞에 둔 이유는 Cloudflare Free 프록시가 국내 일부 통신사를 미국 서부 엣지로 보내서다. 서버 설정
   (`PHOTO_CDN_DOMAIN=cdn.laimory.app`)과 URL 형태는 앞단과 무관하다.
 - DB에 URL이 materialize되는 것은 사진 `photoUrl`뿐이다. 문의 첨부·공지 썸네일은 filename만 저장하고 조회 때
   `PHOTO_CDN_DOMAIN`을 붙이므로 도메인 변경 시 backfill 대상이 아니다.
-- **S3 → R2 이벤트 복제(#647, 임시)**: prod가 S3 primary인 동안 R2를 S3의 완전한 사본으로 유지하려고, 사진 S3 버킷의
-  `ObjectCreated`·`ObjectRemoved` 이벤트를 Lambda(`deploy/aws/photo-r2-replicator/`)가 R2에 PUT·DELETE로 반영한다.
-  삭제 복제는 탈퇴 파기가 R2 사본까지 닿게 하는 경로이므로, R2에 prod 사본이 있는 동안에는 prod 서버가 R2를 직접 지우는
-  상태가 되기 전에 복제를 끄면 안 된다. 실패 이벤트는 DLQ에 남고 monitoring CloudWatch collector → Grafana 경보로
-  드러난다. 그래서 Worker의 이전 CloudFront 폴백은 꺼져 있다(`FALLBACK_ORIGIN` 바인딩 제거) — R2에 없는 key는 404.
+- **운영 상태(2026-11-17)**: dev·prod 모두 `PHOTO_STORAGE_PRIMARY=r2` + `PHOTO_S3_BUCKET` 유지 — 업로드는 R2, 삭제는
+  양쪽이다. 기존 S3 객체는 전부 R2에 있다(전환 기간 S3 이벤트 → Lambda 복제(#647)로 R2를 S3의 완전한 사본으로 유지하고
+  전수 대조 후 제거). Worker의 이전 CloudFront 폴백도 꺼져 있다(`FALLBACK_ORIGIN` 바인딩 제거) — R2에 없는 key는 404.
+  DB의 옛 `cloudfront.net` `photoUrl`은 이전 CloudFront·S3가 계속 서빙하므로 S3 버킷은 그 URL을 backfill한 뒤 지운다.
+  지우기 전에 `PHOTO_S3_BUCKET`을 먼저 비우고 재배포한다 — 반대 순서면 삭제 경로가 없는 버킷 때문에 계속 실패한다.
 
 **사진 bucket 운영 계약(2026-08-28 조회 확인)**: `laimory-photos-…`는 **versioning 미설정·Object
 Lock 없음·lifecycle 없음**이다. versioning을 켤 계획이 없다 — 업로드마다 UUIDv7 파일명이라 덮어쓰기가

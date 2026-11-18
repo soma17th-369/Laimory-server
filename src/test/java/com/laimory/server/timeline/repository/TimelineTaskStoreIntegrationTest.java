@@ -138,75 +138,7 @@ class TimelineTaskStoreIntegrationTest {
         }
     }
 
-    @Test
-    void processingIndex_countsStuck_removesTerminal_andPrunesExpired() {
-        Instant now = Instant.now();
-        String stuckId = "it-stuck-" + UUID.randomUUID();
-        String expiredId = "it-expired-" + UUID.randomUUID();
-        try {
-            long baseline = timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(3));
-            timelineTaskStore.save(stuckId,
-                    TimelineDraftTask.processing(SUBJECT, 42L, null, tokenHashes("h"),
-                            now.minus(Duration.ofSeconds(100))),
-                    Duration.ofMinutes(3));
 
-            assertThat(timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline + 1L);
-
-            timelineTaskStore.save(stuckId,
-                    TimelineDraftTask.success(SUBJECT, 42L, tokenHashes("h")), Duration.ofHours(24));
-            assertThat(timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline);
-
-            // task key를 일부러 살아 있게 저장해도 startedAt이 TTL 창 밖이면 index 관측에서 제거된다.
-            timelineTaskStore.save(expiredId,
-                    TimelineDraftTask.processing(SUBJECT, 42L, null, tokenHashes("h"),
-                            now.minus(Duration.ofSeconds(181))),
-                    Duration.ofMinutes(3));
-            assertThat(timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline);
-        } finally {
-            timelineTaskStore.save(stuckId,
-                    TimelineDraftTask.success(SUBJECT, 42L, tokenHashes("h")), Duration.ofMinutes(1));
-            timelineTaskStore.save(expiredId,
-                    TimelineDraftTask.success(SUBJECT, 42L, tokenHashes("h")), Duration.ofMinutes(1));
-            redisGateway.delete("timeline:draft-task:" + stuckId);
-            redisGateway.delete("timeline:draft-task:" + expiredId);
-        }
-    }
-
-    @Test
-    void processingIndex_stuckWindowBoundaries_areExactAtMillis() {
-        // stuck 창 (now-3m, now-90s] 경계 고정: 89.999s 미포함·90s 포함·179.999s 포함·180s prune.
-        Instant now = Instant.now();
-        String beforeThresholdId = "it-b1-" + UUID.randomUUID();
-        String atThresholdId = "it-b2-" + UUID.randomUUID();
-        String beforeExpiryId = "it-b3-" + UUID.randomUUID();
-        String atExpiryId = "it-b4-" + UUID.randomUUID();
-        List<String> ids = List.of(beforeThresholdId, atThresholdId, beforeExpiryId, atExpiryId);
-        try {
-            long baseline = timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(3));
-            timelineTaskStore.save(beforeThresholdId, TimelineDraftTask.processing(SUBJECT, 42L, null, tokenHashes("h"),
-                    now.minus(Duration.ofMillis(89_999))), Duration.ofMinutes(3));
-            timelineTaskStore.save(atThresholdId, TimelineDraftTask.processing(SUBJECT, 42L, null, tokenHashes("h"),
-                    now.minus(Duration.ofMillis(90_000))), Duration.ofMinutes(3));
-            timelineTaskStore.save(beforeExpiryId, TimelineDraftTask.processing(SUBJECT, 42L, null, tokenHashes("h"),
-                    now.minus(Duration.ofMillis(179_999))), Duration.ofMinutes(3));
-            timelineTaskStore.save(atExpiryId, TimelineDraftTask.processing(SUBJECT, 42L, null, tokenHashes("h"),
-                    now.minus(Duration.ofMillis(180_000))), Duration.ofMinutes(3));
-
-            assertThat(timelineTaskStore.countStuckProcessing(
-                    now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(baseline + 2L);
-        } finally {
-            for (String id : ids) {
-                timelineTaskStore.save(id,
-                        TimelineDraftTask.success(SUBJECT, 42L, tokenHashes("h")), Duration.ofMinutes(1));
-                redisGateway.delete("timeline:draft-task:" + id);
-            }
-        }
-    }
 
     @Test
     void processingTask_expiresViaTtl_withoutTerminalTransition() throws Exception {

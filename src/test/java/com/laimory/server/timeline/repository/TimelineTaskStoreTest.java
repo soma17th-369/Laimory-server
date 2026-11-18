@@ -87,7 +87,6 @@ class TimelineTaskStoreTest {
         ArgumentCaptor<String> jsonCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<Duration> ttlCaptor = ArgumentCaptor.forClass(Duration.class);
         verify(redis).set(keyCaptor.capture(), jsonCaptor.capture(), ttlCaptor.capture());
-        verify(redis).removeFromSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY, List.of("abc"));
         verify(redis).removeFromSortedSet(USER_INDEX_KEY, List.of("abc"));
 
         assertThat(keyCaptor.getValue()).isEqualTo("timeline:draft-task:abc");
@@ -148,7 +147,7 @@ class TimelineTaskStoreTest {
     }
 
     @Test
-    void saveTerminalIfPresent_success_removesBothIndexes() throws Exception {
+    void saveTerminalIfPresent_success_removesUserIndexMember() throws Exception {
         TimelineDraftTask terminal = TimelineDraftTask.success(SUBJECT, 42L, tokenHashes("cb"));
         when(redis.setIfPresent(anyString(), anyString(), any())).thenReturn(true);
 
@@ -158,7 +157,6 @@ class TimelineTaskStoreTest {
         verify(redis).setIfPresent(org.mockito.ArgumentMatchers.eq("timeline:draft-task:abc"),
                 terminalJson.capture(), org.mockito.ArgumentMatchers.eq(Duration.ofHours(24)));
         assertThat(objectMapper.readValue(terminalJson.getValue(), TimelineDraftTask.class)).isEqualTo(terminal);
-        verify(redis).removeFromSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY, List.of("abc"));
         verify(redis).removeFromSortedSet(USER_INDEX_KEY, List.of("abc"));
     }
 
@@ -250,17 +248,16 @@ class TimelineTaskStoreTest {
     }
 
     @Test
-    void save_processingGlobalAddFailure_retriesSameCommandWithoutTaskRead() {
+    void save_processingUserAddFailure_retriesSameCommandWithoutTaskRead() {
         doThrow(new IllegalStateException("primary")).doNothing().when(redis)
-                .addToSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY, "abc", STARTED_AT.toEpochMilli());
+                .addToSortedSet(USER_INDEX_KEY, "abc", STARTED_AT.toEpochMilli());
 
         store.save("abc", processingTask(), Duration.ofMinutes(3));
 
-        verify(redis, times(2)).addToSortedSet(
-                TimelineTaskStore.PROCESSING_INDEX_KEY, "abc", STARTED_AT.toEpochMilli());
+        verify(redis, times(2)).addToSortedSet(USER_INDEX_KEY, "abc", STARTED_AT.toEpochMilli());
         verify(redis, never()).get(anyString());
         assertThat(meterRegistry.get("laimory.timeline.task.index.repair")
-                .tags("index", "global", "operation", "add", "result", "success")
+                .tags("index", "user", "operation", "add", "result", "success")
                 .counter().count()).isEqualTo(1.0);
     }
 
@@ -281,69 +278,51 @@ class TimelineTaskStoreTest {
     @Test
     void save_indexRepairFailure_isBestEffortAndRecorded() {
         doThrow(new IllegalStateException("primary"), new IllegalStateException("repair")).when(redis)
-                .addToSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY, "abc", STARTED_AT.toEpochMilli());
+                .addToSortedSet(USER_INDEX_KEY, "abc", STARTED_AT.toEpochMilli());
 
         store.save("abc", processingTask(), Duration.ofMinutes(3));
 
         assertThat(meterRegistry.get("laimory.timeline.task.index.repair")
-                .tags("index", "global", "operation", "add", "result", "failed")
+                .tags("index", "user", "operation", "add", "result", "failed")
                 .counter().count()).isEqualTo(1.0);
     }
 
     @Test
     void save_terminalRemoveFailure_retriesSameCommandWithoutTaskRead() {
         TimelineDraftTask terminal = TimelineDraftTask.success(SUBJECT, 42L, tokenHashes("h"));
-        when(redis.removeFromSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY, List.of("abc")))
+        when(redis.removeFromSortedSet(USER_INDEX_KEY, List.of("abc")))
                 .thenThrow(new IllegalStateException("primary"))
                 .thenReturn(0L);
 
         store.save("abc", terminal, Duration.ofHours(24));
 
-        verify(redis, times(2)).removeFromSortedSet(
-                TimelineTaskStore.PROCESSING_INDEX_KEY, List.of("abc"));
-        verify(redis).removeFromSortedSet(USER_INDEX_KEY, List.of("abc"));
+        verify(redis, times(2)).removeFromSortedSet(USER_INDEX_KEY, List.of("abc"));
         verify(redis, never()).get(anyString());
         assertThat(meterRegistry.get("laimory.timeline.task.index.repair")
-                .tags("index", "global", "operation", "remove", "result", "success")
+                .tags("index", "user", "operation", "remove", "result", "success")
                 .counter().count()).isEqualTo(1.0);
     }
 
     @Test
-    void save_processingWritesTaskThenAddsBothIndexesAndRefreshesUserTtl() {
+    void save_processingWritesTaskThenAddsUserIndexAndRefreshesTtl() {
         store.save("abc", processingTask(), Duration.ofMinutes(3));
 
         verify(redis).set(org.mockito.ArgumentMatchers.eq("timeline:draft-task:abc"),
                 anyString(), org.mockito.ArgumentMatchers.eq(Duration.ofMinutes(3)));
-        verify(redis).addToSortedSet(
-                TimelineTaskStore.PROCESSING_INDEX_KEY, "abc", STARTED_AT.toEpochMilli());
         verify(redis).addToSortedSet(USER_INDEX_KEY, "abc", STARTED_AT.toEpochMilli());
         verify(redis).expire(USER_INDEX_KEY, Duration.ofMinutes(3));
     }
 
     @Test
-    void save_terminalRemovesTaskFromBothIndexes() {
+    void save_terminalRemovesTaskFromUserIndex() {
         store.save("success", TimelineDraftTask.success(SUBJECT, 42L, tokenHashes("h")), Duration.ofHours(24));
         store.save("failed", TimelineDraftTask.failed(SUBJECT, 42L, -1009, tokenHashes("h")),
                 Duration.ofHours(24));
 
-        verify(redis).removeFromSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY, List.of("success"));
         verify(redis).removeFromSortedSet(USER_INDEX_KEY, List.of("success"));
-        verify(redis).removeFromSortedSet(TimelineTaskStore.PROCESSING_INDEX_KEY, List.of("failed"));
         verify(redis).removeFromSortedSet(USER_INDEX_KEY, List.of("failed"));
     }
 
-    @Test
-    void countStuckProcessing_delegatesExactTtlAndThresholdCutoffs() {
-        // 만료 cutoff(now-3m)는 prune, stuck cutoff(now-90s)는 count 상한 — 정확한 epoch millis 전달을 고정한다.
-        Instant now = Instant.parse("2026-07-24T12:00:00Z");
-        when(redis.countSortedSetByScore(TimelineTaskStore.PROCESSING_INDEX_KEY,
-                now.minus(Duration.ofSeconds(90)).toEpochMilli())).thenReturn(2L);
-
-        assertThat(store.countStuckProcessing(
-                now, Duration.ofSeconds(90), Duration.ofMinutes(3))).isEqualTo(2L);
-        verify(redis).pruneSortedSetByScore(TimelineTaskStore.PROCESSING_INDEX_KEY,
-                now.minus(Duration.ofMinutes(3)).toEpochMilli());
-    }
 
     @Test
     void find_jsonWithoutRequiredTaskFields_isRejected() {

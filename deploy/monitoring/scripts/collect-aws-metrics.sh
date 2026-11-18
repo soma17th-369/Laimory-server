@@ -1,13 +1,10 @@
 #!/bin/bash
 # monitoring EC2 자신의 burst credit와 root EBS 지표를 CloudWatch에서 읽어 node_exporter textfile로 노출한다.
-# S3 → R2 사진 복제(#647, 임시)의 실패 지표도 함께 읽는다 — 복제를 정리할 때 이 두 지표와 경보 규칙도 지운다.
 set -euo pipefail
 
 readonly OUTPUT_DIR=/var/lib/node_exporter/textfile_collector
 readonly OUTPUT_FILE="$OUTPUT_DIR/laimory_aws.prom"
 readonly IMDS=http://169.254.169.254/latest
-readonly PHOTO_REPLICATOR_FUNCTION=laimory-shared-photo-replicator
-readonly PHOTO_REPLICATOR_DLQ=laimory-shared-photo-replicator-dlq
 
 install -d -m 0750 -o root -g node_exporter "$OUTPUT_DIR"
 tmp_file=$(mktemp "$OUTPUT_DIR/.laimory_aws.XXXXXX")
@@ -47,8 +44,7 @@ volume_id=$(jq -er --arg device "$root_device" \
   '.Reservations[0].Instances[0].BlockDeviceMappings[]
    | select(.DeviceName == $device) | .Ebs.VolumeId' <<<"$instance_json") || fail
 
-queries=$(jq -cn --arg instance "$instance_id" --arg volume "$volume_id" \
-  --arg replicator "$PHOTO_REPLICATOR_FUNCTION" --arg dlq "$PHOTO_REPLICATOR_DLQ" '
+queries=$(jq -cn --arg instance "$instance_id" --arg volume "$volume_id" '
   def metric($id; $namespace; $name; $dimension; $value; $stat):
     {
       Id: $id,
@@ -71,9 +67,7 @@ queries=$(jq -cn --arg instance "$instance_id" --arg volume "$volume_id" \
     metric("writeops"; "AWS/EBS"; "VolumeWriteOps"; "VolumeId"; $volume; "Sum"),
     metric("readtime"; "AWS/EBS"; "VolumeTotalReadTime"; "VolumeId"; $volume; "Sum"),
     metric("writetime"; "AWS/EBS"; "VolumeTotalWriteTime"; "VolumeId"; $volume; "Sum"),
-    metric("idletime"; "AWS/EBS"; "VolumeIdleTime"; "VolumeId"; $volume; "Sum"),
-    metric("replicadlq"; "AWS/SQS"; "ApproximateNumberOfMessagesVisible"; "QueueName"; $dlq; "Maximum"),
-    metric("replicadest"; "AWS/Lambda"; "DestinationDeliveryFailures"; "FunctionName"; $replicator; "Sum")
+    metric("idletime"; "AWS/EBS"; "VolumeIdleTime"; "VolumeId"; $volume; "Sum")
   ]') || fail
 
 # EndTime은 exclusive다. 5분 경계에 맞춰 진행 중인 partial bucket을 제외해야 VolumeIdleTime/300
@@ -87,10 +81,9 @@ metrics_json=$(aws cloudwatch get-metric-data --region "$region" \
   --scan-by TimestampDescending --metric-data-queries "$queries" --output json) || fail
 
 # GetMetricData는 CLI exit 0이어도 query별 PartialData/InternalError를 반환할 수 있다. 기대한
-# 10개 query가 모두 Complete인 경우에만 collector 자체를 up으로 기록한다.
+# 8개 query가 모두 Complete인 경우에만 collector 자체를 up으로 기록한다.
 jq -e '
-  ["credit", "surplus", "queue", "readops", "writeops", "readtime", "writetime", "idletime",
-   "replicadlq", "replicadest"]
+  ["credit", "surplus", "queue", "readops", "writeops", "readtime", "writetime", "idletime"]
     as $expected |
   ([.MetricDataResults[]?
     | select(.Id as $id | $expected | index($id))
@@ -111,9 +104,6 @@ value() {
 credit=$(value credit)
 surplus=$(value surplus)
 queue=$(value queue)
-# 복제 지표는 메시지·실패가 없으면 데이터 자체가 없다(DestinationDeliveryFailures는 0도 보내지 않음) → 0으로 본다.
-replication_dlq=$(jq -r '[.MetricDataResults[] | select(.Id == "replicadlq") | .Values[0]][0] // 0' <<<"$metrics_json") || fail
-replication_destination_failures=$(jq -r '[.MetricDataResults[] | select(.Id == "replicadest") | .Values[0]][0] // 0' <<<"$metrics_json") || fail
 read_latency=$(jq -r '
   def value($id): [.MetricDataResults[] | select(.Id == $id) | .Values[0]][0] // null;
   (value("readtime")) as $total | (value("readops")) as $ops |
@@ -157,12 +147,6 @@ laimory_aws_ebs_write_latency_seconds $write_latency
 # HELP laimory_aws_ebs_busy_ratio Root EBS non-idle fraction in the latest five-minute period.
 # TYPE laimory_aws_ebs_busy_ratio gauge
 laimory_aws_ebs_busy_ratio $busy_ratio
-# HELP laimory_aws_photo_replication_dlq_messages Messages waiting in the S3 to R2 photo replication DLQ.
-# TYPE laimory_aws_photo_replication_dlq_messages gauge
-laimory_aws_photo_replication_dlq_messages $replication_dlq
-# HELP laimory_aws_photo_replication_destination_failures_last_5m Failed events the replication Lambda could not deliver to its DLQ in the latest five-minute period with data (looked back 20 minutes; 0 when none).
-# TYPE laimory_aws_photo_replication_destination_failures_last_5m gauge
-laimory_aws_photo_replication_destination_failures_last_5m $replication_destination_failures
 EOF
 
 chmod 0644 "$tmp_file"
