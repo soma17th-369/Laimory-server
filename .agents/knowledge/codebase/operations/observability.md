@@ -346,8 +346,8 @@ loopback/private IP에 publish하며 Prometheus와 exporter port는 Docker netwo
 
 node_exporter는 monitoring, dev WAS, test WAS(#400), dev MySQL, Redis, ELK와 **prod WAS 2대·prod MySQL**의 private
 interface:9100에만 bind하는 systemd service다. pinned release archive SHA를 검증한다. textfile collector는
-root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS와 1분
-Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
+root oneshot이 atomic rename한 `.prom`만 읽는다. monitoring에서는 5분 CloudWatch EC2/EBS, 5분 Upstash Redis
+월 누적 명령 수(#653)와 1분 Elasticsearch health/latest-log을, dev WAS에서는 loopback Filebeat stats를 수집한다. 최근 log 시각은
 무트래픽과 장애를 구분할 수 없어 alert하지 않는다. central mysqld exporter는 dev MySQL의 IP-scoped USAGE-only 계정으로 global
 status/variables만 읽는다. Redis exporter ACL은 INFO/PING/CLIENT SETNAME만 허용하고 key pattern,
 GET/SCAN/EVAL/SLOWLOG와 mutation을 허용하지 않는다.
@@ -406,8 +406,8 @@ OOM kill, PROCESSING stuck)은 PromQL에 `environment` 셀렉터를 두지 않�
 선언하지 않는다 — Grafana가 조건 쿼리 결과의 라벨을 alert instance 라벨로 넘기므로 그대로 흐르고,
 커스텀 라벨을 두면 쿼리 라벨을 덮어써 다른 환경의 알림이 오표기된다. 나머지 rule은 그 환경에만 있는
 자산(dev/monitoring 전용 exporter·수집기, 공개 도메인 probe, 환경 공유 자산인 Elasticsearch의
-monitoring host 수집기를 읽는 `laimory_elasticsearch_unhealthy`)을 읽으므로 `environment="dev"`를
-유지한다. log pipeline 계열은 환경 중립이다 — Filebeat stats 수집기는 dev·prod WAS 전체에 설치되고,
+monitoring host 수집기를 읽는 `laimory_elasticsearch_unhealthy`, 외부 Upstash의 월 사용량을 monitoring
+host 수집기로 읽는 `laimory_upstash_*`)을 읽으므로 `environment="dev"`를 유지한다. log pipeline 계열은 환경 중립이다 — Filebeat stats 수집기는 dev·prod WAS 전체에 설치되고,
 `laimory_application_error_log`는 wildcard index(`laimory-*`)를 environment terms(마지막 date
 histogram 앞)로 나눠 환경별 alert instance를 만든다. `or`로 분기를 잇는 rule은 각 분기를
 `((1 - metric) > 0)`처럼 필터링해야 한다 — 필터 없는 선행 분기의 값 0 시계열이 동일 라벨셋의 후행
@@ -418,6 +418,9 @@ backup timer가 쓰는 textfile 시계열만 읽는 환경 고정 rule이다 —
 notification policy의 `group_by`는 `environment`를 포함해 환경별로 알림 그룹을 나눈다.
 `notify_once="true"` label rule은 `repeat_interval`이 매우 긴 전용 route를 타 firing 동안 재발송하지 않고,
 resolved 뒤 다시 firing하면 새로 알린다(#617).
+Upstash Redis는 무료 플랜(월 50만 명령)을 유지하고 pay-as-you-go로 넘기지 않는다 — 무료 플랜에는 자체 알림·Prometheus
+연동이 없어 monitoring host 수집기가 Developer API(read-only key)의 월 누적 명령 수를 읽고, 70% 초과를
+`notify_once`로 한 번 알린다(월이 바뀌어 수치가 초기화되면 resolved). 대응은 한도 상향이 아니라 Redis 명령 감축이다(#653).
 `notification-policy.yml`·`templates.yml`·`contact-points.yml`은 alert rule 자동 배포 workflow의
 대상이 아니므로 merge만으로 반영되지 않고 monitoring host에서 수동 반영과 reload가 필요하다.
 일반 host memory는

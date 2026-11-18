@@ -182,3 +182,118 @@ groups:
           service: laimory
           severity: critical
         isPaused: false
+
+      - uid: laimory_upstash_usage_high
+        title: Upstash monthly usage high
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: 'laimory_upstash_monthly_requests{job="node",environment="dev",host="monitoring"} / 500000'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0.7], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: 'Upstash Redis has used over 70% of the free plan monthly command limit.'
+          description: 'The free plan allows 500,000 commands per month and the account stays on the free plan, so reduce Redis reads before the limit. It resolves when the count resets at the next billing month; the notify_once route sends no repeat while it stays firing.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#upstash-usage
+        labels:
+          environment: dev
+          job: node
+          service: laimory
+          severity: warning
+          notify_once: "true"
+        isPaused: false
+
+      - uid: laimory_upstash_collection_unhealthy
+        title: Upstash usage collection unhealthy
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: '((1 - laimory_upstash_up{job="node",environment="dev",host="monitoring"}) > 0) or (time() - laimory_upstash_last_attempt_unixtime_seconds{job="node",environment="dev",host="monitoring"} > 1800) or (absent(laimory_upstash_up{job="node",environment="dev",host="monitoring"}) and on(job,environment,host) (up{job="node",environment="dev",host="monitoring"} == 1))'
+              instant: true
+              intervalMs: 15000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: { params: [0], type: gt }
+                  operator: { type: and }
+                  query: { params: [C] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 15m
+        annotations:
+          summary: 'The monitoring host cannot read Upstash monthly usage.'
+          description: 'Without this collection the Upstash monthly usage alert cannot fire. Check the timer, the credentials secret, the database ID in .env, and Upstash Developer API reachability.'
+          runbook_url: https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/monitoring/README.md#upstash-usage
+        labels:
+          environment: dev
+          job: node
+          service: laimory
+          severity: warning
+        isPaused: false

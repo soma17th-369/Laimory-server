@@ -18,6 +18,10 @@ case "$SECRET_NAME" in
     OWNER=59000
     GROUP=59000
     ;;
+  upstash_api_credentials)
+    OWNER=0
+    GROUP=0
+    ;;
   *)
     echo "unsupported monitoring secret name: $SECRET_NAME" >&2
     exit 1
