@@ -460,7 +460,7 @@ application-owned access는 `RedisGateway`를 거친다. 승인 예외는 `Cache
 `app.redis.key-prefix`를 캐시 키 prefix로 붙여 환경 격리는 동일하게 유지한다. 세 번째 예외는 keyspace 만료 알림 구독
 `RedisKeyExpirationSubscriber`(#565)다 — pub/sub 구독은 key 연산 경계 밖이라 Spring Data Redis listener container를 직접
 쓰고, 채널 패턴 `__keyspace@<db>__:{app.redis.key-prefix}timeline:draft-task:loss-timer:*`에 같은 prefix를 넣어 Redis가 환경별로 나눠
-보낸다. Redis 설정 `notify-keyspace-events`에 `K`·`x`가 있어야 하며(공유 Redis 운영 전제 — environments.md) 앱은 설정을
+보낸다. Redis 설정 `notify-keyspace-events`에 `K`·`x`가 있어야 하며(primary Redis 운영 전제 — environments.md) 앱은 설정을
 바꾸지 않고 기동 뒤 `CONFIG GET`으로 확인해 누락·조회 실패를 ERROR로 남긴다. 구독은 기동 완료 뒤 걸며 등록 실패도 ERROR만
 남기고 기동은 계속한다. 첫 구독 시도가 Redis 연결을 얻지 못하면 Spring Data Redis는 재시도하지 않아 그 서버는 재시작
 전까지 만료 알림을 받지 못한다(수용 — ERROR 경보로 감지, 재시작으로 회복). 구독이 성립한 뒤의 연결 끊김은 listener
@@ -504,7 +504,7 @@ native 명령으로 실행하고, 실패는 task 재조회 없이 같은 의도�
 목록 조회용 ZREVRANGE·후보 순서 정렬 MGET·batch ZREM primitive도 gateway가 제공한다.
 logical key는 `{feature}:{entity}:{id}` namespace 형태로 만들고 feature store의 상수에서 조립한다.
 호출부 key에 `dev_` 같은 environment prefix를 hardcode하지 않는다.
-dev는 공유 Redis에서 `dev_` prefix를 쓰고 local/prod 기본값은 빈 문자열이다.
+dev·test는 공유 Redis에서 `dev_`·`test_` prefix를 쓰고, local과 prod(별도 Upstash primary)는 빈 문자열이다.
 Spring Session은 framework-managed 영역이며 namespace 설정으로 격리한다.
 
 과거 같은 날짜 작업 admission에 쓰던 `timeline:date-guard:*` key는 더 이상 application key 계약이
