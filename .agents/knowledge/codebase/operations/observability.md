@@ -351,8 +351,9 @@ GET/SCAN/EVAL/SLOWLOG와 mutation을 허용하지 않는다.
 
 Grafana는 `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs` 네 dashboard를 file
 provisioning한다. Prometheus datasource UID는 `prometheus`, Elasticsearch UID는 `elasticsearch-dev`다.
-네 dashboard 모두 `environment` 변수로 dev·prod를 고른다(test는 제외). Redis는 dev·test·prod 공용 1대이고
-exporter 라벨이 `environment=dev`라 Redis 패널은 environment 셀렉터 없이 항상 같은 값을 보여준다. Overview 경보
+네 dashboard 모두 `environment` 변수로 dev·prod를 고른다(test는 제외). Redis 패널·`redis_up`은 dev·test 공용 Redis(prod dual write secondary 겸용) 1대만 보고
+exporter 라벨이 `environment=dev`라 environment 셀렉터 없이 항상 같은 값을 보여준다. prod primary인 Upstash는
+exporter가 없고 월 사용량 수집기(`laimory_upstash_*`)만 있다. Overview 경보
 목록은 선택한 environment의 alert instance만 보여주므로, `environment=dev`로 고정된 공용 자산(Redis·monitoring
 host·Elasticsearch) 경보는 dev를 골라야 보인다. prod를 고르면 MySQL backend(prod mysqld exporter 없음),
 public `/status`·TLS probe(target이 dev 도메인뿐), monitoring host 전용 CloudWatch/EBS 패널은 No data다.

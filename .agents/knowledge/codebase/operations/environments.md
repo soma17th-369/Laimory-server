@@ -24,7 +24,7 @@ automation을 바꿀 때 읽는다.
 | local | `docker` | Compose | default noop | default noop | default noop | default `fixture` | on | text | empty | none |
 | integration | `docker` | Compose | default noop; test spy/simulation | default noop | default noop | default `fixture` | on | text | empty | local task |
 | dev | default | dev MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | on | JSON, dev environment | `dev_` | `dev` push |
-| prod | default | prod MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
+| prod | default | prod MySQL + Upstash Redis(primary, shared Redis는 mirror) | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
 | test | default | **dev MySQL 공유** + shared Redis | `.env` `http`(kakao-simulator) | `.env` Kakao(**simulator base URL + dummy key**) | `.env` noop | `.env` `secretsmanager`(dev와 같은 secret — DB 공유라 같은 HMAC key 필수) | on | **수집 없음**(Filebeat 미설치, host `docker logs`만) | `test_` | `test` push |
 
 Flyway는 공통 설정에서 켜져 모든 환경의 앱 시작 시 실행한다. 앱 DataSource 계정(`DB_USERNAME`)은 DML만
@@ -120,6 +120,7 @@ application 배포·health gate 의존성이 아니다.
   `default`)·`REDIS_MIRROR_PASSWORD`·`REDIS_MIRROR_SSL`(기본 true). host가 비면 mirror 없음(checked-in 기본, dev·test·로컬·OCI).
   설정하면 `RedisGateway`의 key 쓰기를 secondary에도 동기 반영한다(캐시·Spring Session·만료 구독·readiness는 `REDIS_*`
   primary만). primary·secondary 전환은 `REDIS_*`와 `REDIS_MIRROR_*` 값을 맞바꿔 재배포한다(절차는 deployment.md).
+  prod 현재 값은 `REDIS_*` = Upstash(primary), `REDIS_MIRROR_*` = shared Redis(secondary)다.
   deploy preflight는 `REDIS_*`와 마찬가지로 이 키들을 검사하지 않는다.
 - `JWT_SECRET`, Google/Kakao OAuth client names
 - `APP_EDGE_TRUSTED_PROXY_CIDRS`(#327 — 신뢰 엣지 판정용 CIDR 목록, 콤마 구분. ALB ENI가 사는 서브넷을
@@ -213,11 +214,14 @@ healthy Kakao provider에서도 local rejection을 받는다. #262 이후 local 
 
 - secret/credential 값을 knowledge에 복제하지 않는다.
 - application default, host `.env` 소유 값, workflow가 강제하는 기대값을 구분한다.
-- shared Redis의 dev prefix를 application key와 Spring Session namespace 모두에서 보존한다.
-- shared Redis(dev·test·prod 공유 1대)는 `notify-keyspace-events`에 `K`·`x`가 켜져 있어야 하고, 앱 Redis 사용자
-  (`laimory_app`)는 환경별 채널 패턴 `&__keyspace@0__:{dev_,test_,}timeline:draft-task:loss-timer:*`(PSUBSCRIBE는 ACL 패턴과 문자
-  그대로 일치해야 함)과 기동 검사용 `+config|get` 권한을 가져야 한다(#565 크레딧 유실 환불). 누락이면 유실 환불이 조용히
-  멈추고 기동 시 ERROR 로그가 남는다. 설정 변경은 공유 인스턴스 전체(세 환경)에 동시에 적용되며 운영 승인 대상이다.
+- shared Redis의 dev·test prefix를 application key와 Spring Session namespace 모두에서 보존한다.
+- Redis 배치: dev·test는 shared Redis 1대를 prefix로 나눠 쓰고, prod primary는 별도 Upstash Redis(빈 prefix)다.
+  shared Redis는 prod의 dual write secondary(`REDIS_MIRROR_*`)로도 쓰인다 — prod는 prefix 없는 key를 그대로 복제한다.
+- 앱이 primary로 쓰는 Redis는 모두 `notify-keyspace-events`에 `K`·`x`가 켜져 있어야 한다(#565 크레딧 유실 환불).
+  shared Redis의 앱 사용자(`laimory_app`)는 환경별 채널 패턴 `&__keyspace@0__:{dev_,test_,}timeline:draft-task:loss-timer:*`
+  (PSUBSCRIBE는 ACL 패턴과 문자 그대로 일치해야 함)과 기동 검사용 `+config|get` 권한을 가져야 한다. 누락이면 유실 환불이
+  조용히 멈추고 기동 시 ERROR 로그가 남는다. shared Redis 설정 변경은 dev·test(와 prod mirror)에 동시에 적용되고,
+  Upstash 설정 변경은 prod에 적용되며 둘 다 운영 승인 대상이다.
 
 ## Known Gaps
 

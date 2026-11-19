@@ -27,9 +27,9 @@ dependency, schema, Redis, profile, AI, logging, Docker, deployment 또는 AWS �
 - application-owned Redis 접근은 `RedisGateway`를 거쳐야 한다. 승인 예외는 Spring Cache Redis manager
   배선 `CacheConfig`(#429)와 그 캐시 구현 `SingleFlightRedisCacheManager`(#491), keyspace 만료 알림 구독
   `RedisKeyExpirationSubscriber`(#565)이며, 같은 `app.redis.key-prefix`를 캐시 키·구독 채널 패턴에 붙인다.
-- 공유 Redis의 `notify-keyspace-events`에 `K`·`x`가 있어야 크레딧 유실 환불이 동작한다(#565). 앱은 설정을 바꾸지 않고
+- primary Redis(dev·test는 공유 Redis, prod는 Upstash)의 `notify-keyspace-events`에 `K`·`x`가 있어야 크레딧 유실 환불이 동작한다(#565). 앱은 설정을 바꾸지 않고
   기동 뒤 확인해 누락을 ERROR로 남긴다. 로컬 Compose Redis는 `--notify-keyspace-events Kx`로 뜬다.
-- dev와 prod가 Redis를 공유하므로 dev는 환경 prefix로 격리한다.
+- dev와 test가 Redis를 공유하므로 환경 prefix(`dev_`·`test_`)로 격리한다. prod primary는 별도 Upstash라 빈 prefix다.
 - 기본 Spring profile은 원격 의존성을 기대한다. 로컬 실행은 `docker` profile을 사용한다.
 - DB·Redis·JWT·OAuth의 필수 설정 일부는 startup에서 fail-fast한다.
 - subject 매핑 HMAC key(#282)의 `app.subject.mode`는 배포 기본 프로필에 기본값이 없어 미설정이면
