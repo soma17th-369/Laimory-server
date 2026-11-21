@@ -1,0 +1,12 @@
+[Unit]
+Description=Upload Laimory OCI MySQL binlog to R2 every minute
+
+[Timer]
+OnBootSec=1m
+OnUnitActiveSec=1m
+# 단일 host라 이 주기가 곧 host 전손 때의 손실 창이다. 활성 binlog는 회전 전까지 닫히지 않으므로
+# uploader가 매 실행 tail을 따로 올린다 — 주기를 늘리면 그만큼 창이 넓어진다.
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
