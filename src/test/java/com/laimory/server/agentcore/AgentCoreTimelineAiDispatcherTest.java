@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.service.TimelineAiDispatchRejectedException;
+import com.laimory.server.timeline.service.TimelineAiDispatchThrottledException;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -45,6 +46,8 @@ import software.amazon.awssdk.services.bedrockagentcore.model.InvokeAgentRuntime
 import software.amazon.awssdk.services.bedrockagentcore.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.bedrockagentcore.model.RetryableConflictException;
 import software.amazon.awssdk.services.bedrockagentcore.model.RuntimeClientErrorException;
+import software.amazon.awssdk.services.bedrockagentcore.model.ServiceQuotaExceededException;
+import software.amazon.awssdk.services.bedrockagentcore.model.ThrottledException;
 import software.amazon.awssdk.services.bedrockagentcore.model.ThrottlingException;
 import software.amazon.awssdk.services.bedrockagentcore.model.ValidationException;
 
@@ -280,6 +283,47 @@ class AgentCoreTimelineAiDispatcherTest {
                     .isInstanceOf(TimelineAiDispatchRejectedException.class)
                     .hasMessageContaining(TASK_ID)
                     .hasMessageNotContaining(TASK_TOKEN);
+        }
+    }
+
+    @Test
+    void dispatch_capacityRejections_areThrottledRejections() {
+        // 용량 한도 거절(#515)은 미접수 확정의 하위 분류다 — inline은 지금처럼 거절로, worker·배치는 재시도로 처리한다.
+        List<RuntimeException> capacityRejections = List.of(
+                ThrottlingException.builder().statusCode(429).message("throttled").build(),
+                ThrottledException.builder().statusCode(429).message("throttled").build(),
+                ServiceQuotaExceededException.builder().statusCode(402).message("quota").build());
+
+        for (RuntimeException rejection : capacityRejections) {
+            AgentCoreTimelineAiDispatcher isolated = new AgentCoreTimelineAiDispatcher(
+                    new AgentCoreDispatchClient(clientThrowing(rejection),
+                            new AgentCoreProperties(RUNTIME_ARN, ENDPOINT, "ap-northeast-2"), MAPPER));
+
+            assertThatThrownBy(() -> isolated.dispatch(request()))
+                    .as(rejection.getClass().getSimpleName())
+                    .isInstanceOf(TimelineAiDispatchThrottledException.class)
+                    .hasMessageContaining(TASK_ID)
+                    .hasMessageNotContaining(TASK_TOKEN);
+        }
+    }
+
+    @Test
+    void dispatch_requestRejections_areNotThrottled() {
+        // 요청 자체가 틀린 거절은 다시 보내도 같다 — throttle로 분류해 재시도하지 않는다.
+        List<RuntimeException> requestRejections = List.of(
+                ValidationException.builder().statusCode(400).message("invalid").build(),
+                AccessDeniedException.builder().statusCode(403).message("denied").build(),
+                ResourceNotFoundException.builder().statusCode(404).message("missing").build());
+
+        for (RuntimeException rejection : requestRejections) {
+            AgentCoreTimelineAiDispatcher isolated = new AgentCoreTimelineAiDispatcher(
+                    new AgentCoreDispatchClient(clientThrowing(rejection),
+                            new AgentCoreProperties(RUNTIME_ARN, ENDPOINT, "ap-northeast-2"), MAPPER));
+
+            assertThatThrownBy(() -> isolated.dispatch(request()))
+                    .as(rejection.getClass().getSimpleName())
+                    .isInstanceOf(TimelineAiDispatchRejectedException.class)
+                    .isNotInstanceOf(TimelineAiDispatchThrottledException.class);
         }
     }
 

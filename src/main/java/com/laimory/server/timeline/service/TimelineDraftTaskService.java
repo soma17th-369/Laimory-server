@@ -7,12 +7,10 @@ import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.common.id.UuidV7;
 import com.laimory.server.common.privacy.PrivacyRedactor;
 import com.laimory.server.credit.CreditCostType;
-import com.laimory.server.credit.CreditRefundReason;
 import com.laimory.server.credit.service.CreditService;
 import com.laimory.server.timeline.DailyRecordStatus;
 import com.laimory.server.timeline.ItemType;
 import com.laimory.server.timeline.RawIds;
-import com.laimory.server.timeline.TaskTokens;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 import com.laimory.server.timeline.dto.CreateDraftTaskResponse;
 import com.laimory.server.timeline.dto.SourceItemDto;
@@ -31,7 +29,6 @@ import com.laimory.server.timeline.payload.StayPayload;
 import com.laimory.server.timeline.photo.PhotoFilenames;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -63,6 +60,9 @@ import org.springframework.stereotype.Service;
  * <p>크레딧은 선생성 transaction이 요청 시점에 차감한다(#565). commit 뒤 유실 타이머를 건 다음 PROCESSING을
  * 기록하며, 둘 중 하나라도 실패하거나 AI가 dispatch를 거절하면(미접수 확정) 응답 전에 환불하고 타이머를 지운다.
  * dispatch 결과를 모르면(UNKNOWN) 그대로 둔다 — 결과 저장·FAILED callback·타이머 만료(유실) 중 하나가 정산한다.
+ *
+ * <p>commit 뒤의 단계(유실 타이머·PROCESSING 기록·접수와 그 보상)는 접수 경로({@link TimelineDispatchSubmitter}, #515)가
+ * 맡는다 — 요청 스레드에서 바로 접수하거나(inline) 접수 대기열에 적재한다(queue).
  */
 @Slf4j
 @Service
@@ -84,17 +84,14 @@ public class TimelineDraftTaskService {
             Set.of("clientPhotoUri", "filename", "photoUrl");
 
     private final DailyRecordService dailyRecordService;
-    private final TimelineTaskService timelineTaskService;
     private final TimelineDraftPreparationService timelineDraftPreparationService;
-    private final TimelineDraftSourceItemService timelineDraftSourceItemService;
     private final TimelineEventService timelineEventService;
     private final TimelineEventItemService timelineEventItemService;
     private final TimelineItemService timelineItemService;
     private final SourceItemEnrichmentService sourceItemEnrichmentService;
-    private final TimelineAiDispatcher timelineAiDispatcher;
+    private final TimelineDispatchSubmitter timelineDispatchSubmitter;
     private final PrivacyRedactor privacyRedactor;
     private final CreditService creditService;
-    private final TimelineTaskLossTimerService timelineTaskLossTimerService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -147,11 +144,6 @@ public class TimelineDraftTaskService {
 
         String taskId = UuidV7.randomUuidV7().toString();
 
-        // 입력 조회·결과 저장·콜백이 함께 쓰는 taskToken. 원문은 AI에 전달하고 Redis에는
-        // SHA-256 hash만 저장한다.
-        String taskToken = TaskTokens.generate();
-        String tokenHash = TaskTokens.hash(taskToken);
-
         Optional<DailyRecord> existingRecord = dailyRecordService.findBySubjectIdAndRecordDate(subjectId, recordDate);
         existingRecord
                 .filter(record -> record.getStatus() == DailyRecordStatus.SAVED)
@@ -189,81 +181,14 @@ public class TimelineDraftTaskService {
         long dailyRecordId = timelineDraftPreparationService.prepareDraft(
                 taskId, subjectId, recordDate, recordAt, recordTimeZone, rows);
 
-        // 2. 유실 타이머 + Redis PROCESSING 기록(dailyRecordId 포함 — 폴링·콜백 전이의 기준).
-        //    실패하면 이번 task의 source rows를 보상 삭제하고 환불·빈 DRAFT soft delete 뒤 전파한다(클래스 주석 참고).
-        //    저장 직전에 캡처하는 processingStartedAt이 폴링 elapsedSeconds의 기준이다.
-        Instant processingStartedAt = clock.instant();
-        try {
-            timelineTaskLossTimerService.start(taskId);
-            timelineTaskService.createProcessing(taskId, subjectId, dailyRecordId,
-                    new TimelineDraftTask.TimelineWindow(timelineWindow.startTime(), timelineWindow.endTime()),
-                    tokenHash, processingStartedAt);
-        } catch (RuntimeException e) {
-            timelineDraftSourceItemService.deleteByTaskId(taskId);
-            refundAndCancelTimerQuietly(taskId, CreditRefundReason.TASK_SAVE_FAILED);
-            softDeleteFailedDraftQuietly(taskId, dailyRecordId);
-            throw e;
-        }
-
-        // 3. AI dispatch — dailyRecordId·offset window는 유지하고 토큰 필드는 taskToken으로 통일한다.
-        //    source item은 AI가 이 토큰으로 서버간 입력 조회 API를 호출해 받아간다.
-        //    미접수 확정(4xx 거절)만 502(-1009)로 던지고 응답·예외 인자에 taskId를 싣지 않는다(진단은 아래 로그가
-        //    담당). 접수 확인과 UNKNOWN은 둘 다 PROCESSING이 살아 있으므로 202/taskId다. 자동 재전송은 하지 않는다.
-        try {
-            timelineAiDispatcher.dispatch(new AiTimelineDispatchRequest(
-                    taskId, taskToken, dailyRecordId, toOffsetWindow(timelineWindow, recordTimeZone)));
-        } catch (TimelineAiDispatchRejectedException e) {
-            // 미접수 확정(4xx 거절) — AI가 접수·write하지 않았음이 확실하므로 FAILED(24h) 종결을 시도한다.
-            // 상세는 로그로만 남겨 응답·폴링 body.error로 유출하지 않는다.
-            log.warn("timeline ai dispatch rejected (미접수 확정): taskId={} detail={}", taskId, e.getMessage());
-            refundAndCancelTimerQuietly(taskId, CreditRefundReason.DISPATCH_REJECTED);
-            softDeleteFailedDraftQuietly(taskId, dailyRecordId);
-            try {
-                timelineTaskService.markFailed(
-                        taskId, subjectId, dailyRecordId, ExceptionType.AI_DISPATCH_FAILED, tokenHash);
-            } catch (RuntimeException saveFailure) {
-                // FAILED 저장까지 실패하면 task 상태는 불명 — read-back·재저장·retry 없이 로그만 남긴다.
-                // PROCESSING으로 남았다면 최초 PROCESSING TTL(5분)이 회수한다.
-                log.warn("timeline ai dispatch rejected, markFailed also failed (task state unknown): taskId={}",
-                        taskId, saveFailure);
-            }
-            throw new BusinessException(ExceptionType.AI_DISPATCH_FAILED);
-        } catch (RuntimeException e) {
-            // UNKNOWN(read timeout·connect 실패·5xx·계약 불일치) — AI가 이미 접수해 final write를 진행 중일 수
-            // 있다. FAILED로 덮거나 재저장으로 TTL을 연장하지 않고 기존 PROCESSING을 그대로 둔다.
-            // AI callback 또는 유실 타이머 만료(처리 기한 3분)가 종결하며, draft도 보존한다.
-            // 차감도 그대로 둔다 — 결과 저장이 확정하거나, FAILED callback·유실 타이머 만료가 환불한다.
-            // 서버 상태가 정상 접수와 같으므로 응답도 202/taskId다 — 실패를 알린 뒤 결과가 생기는 불일치를 막고
-            // 사용자는 폴링으로 결과를 본다(#600). 운영자가 원인을 보도록 ERROR로 남긴다(ERROR 로그 경보 대상).
-            log.error("timeline ai dispatch outcome unknown, returning taskId and keeping PROCESSING: "
-                    + "taskId={} detail={}", taskId, e.getMessage());
-        }
+        // 2. 유실 타이머 + Redis PROCESSING 기록 + AI 접수(또는 접수 대기열 적재)는 접수 경로가 맡는다(#515 —
+        //    app.ai.dispatch.timeline.route). 저장 실패·미접수 확정의 보상과 502도 접수 경로가 한다.
+        //    window의 local 원본은 Redis task에, offset 사본은 AI 접수 body에 쓰인다.
+        timelineDispatchSubmitter.submit(new TimelineDispatchCommand(taskId, subjectId, dailyRecordId,
+                new TimelineDraftTask.TimelineWindow(timelineWindow.startTime(), timelineWindow.endTime()),
+                toOffsetWindow(timelineWindow, recordTimeZone)));
 
         return new CreateDraftTaskResponse(taskId);
-    }
-
-    /**
-     * 생성을 시작하지 못한 task의 차감을 돌려주고 타이머를 지운다. 원래 실패를 덮지 않도록 실패는 로그만 남긴다 —
-     * 환불이 실패하면 타이머를 지우지 않으므로, 타이머가 남았다면 만료(유실 처리)가 다시 환불한다.
-     */
-    private void refundAndCancelTimerQuietly(String taskId, CreditRefundReason reason) {
-        try {
-            creditService.refund(CreditCostType.TIMELINE_CREATION, taskId, reason);
-            timelineTaskLossTimerService.cancel(taskId);
-        } catch (RuntimeException e) {
-            log.warn("timeline credit refund or timer cancel failed (타이머가 남았으면 만료가 환불): taskId={}",
-                    taskId, e);
-        }
-    }
-
-    /** 생성을 시작하지 못한 task의 빈 DRAFT를 정리한다. 원래 실패를 덮지 않도록 실패는 로그만 남긴다(빈 DRAFT 잔존). */
-    private void softDeleteFailedDraftQuietly(String taskId, long dailyRecordId) {
-        try {
-            dailyRecordService.softDeleteFailedDraft(dailyRecordId);
-        } catch (RuntimeException e) {
-            log.warn("failed draft soft delete failed (빈 DRAFT 잔존): taskId={} dailyRecordId={}",
-                    taskId, dailyRecordId, e);
-        }
     }
 
     /**

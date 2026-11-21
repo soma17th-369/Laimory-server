@@ -71,6 +71,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    치환하면 이미지 URL·S3 key가 깨진다). 치환은 prepareDraft 전에 끝나며 실패는 원문 fallback 없이
    전파된다 — DailyRecord/source row/Redis/dispatch 전부 미생성으로 끝난다(fail-closed). final Item
    payload는 이 staging 치환본을 복사하므로 자동으로 같은 보호를 받는다.
+   7~8단계는 접수 경로(`TimelineDispatchSubmitter`, `app.ai.dispatch.timeline.route`, #515)가 맡는다. 아래는 기본
+   `inline` 경로이고, `queue` 경로의 차이는 8단계 뒤 "접수 대기열 경로"에 있다. 미접수 확정·저장 실패 보상은 두 경로가
+   같은 `TimelineDispatchCompensation`을 쓴다.
 7. 유실 타이머(`timeline:draft-task:loss-timer:{taskId}`, 값 없음, TTL = 처리 기한 3분 — #565·#593)를 건 뒤
    Redis task를 `PROCESSING`/`INPUT_PENDING`으로 저장한다(TTL = PROCESSING TTL 5분, `dailyRecordId`·owner·local window·token
    hash·`processingStartedAt` — record 메타데이터는 저장하지 않는다). 둘 중 하나라도 실패하면 이번 task의 source rows를
@@ -100,6 +103,28 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    (AI callback이 종결하거나 처리 기한 3분의 유실 처리가 실패 처리). 차감도 그대로 둔다 — 결과 저장·FAILED
    callback·유실 타이머 만료 중 하나가 정산한다. 서버 상태가 정상 접수와 같으므로 응답도 202/`taskId`이고
    (실패를 알린 뒤 결과가 생기는 불일치·재시도 이중 차감 방지), ERROR 로그를 남겨 ERROR 로그 경보로 운영자가 본다.
+   AgentCore의 용량 한도 거절(Throttling·Throttled·ServiceQuotaExceeded)은 미접수 확정의 하위 분류
+   (`TimelineAiDispatchThrottledException`)라 inline 경로에서는 위와 같이 502로 끝난다.
+
+**접수 대기열 경로**(`route=queue`, #515): AgentCore 새 세션 생성 한도(계정·리전 25 TPS)를 두 인스턴스 합산으로 지키려고
+접수를 SQS Standard 대기열 뒤로 옮긴다.
+
+- POST는 유실 타이머(TTL = 큐 경로 처리 기한, `QUEUED_PROCESSING_DEADLINE` = 접수 대기 예산 60s + 3분)를 건 뒤 task를
+  `PROCESSING`/`DISPATCH_PENDING`으로 저장하고(TTL = 60s + 5분) 식별자·offset window만 담은 메시지를 적재한다.
+  `DISPATCH_PENDING`의 token hash는 원문을 버린 token의 hash라 어떤 서버간 요청도 통과하지 못한다.
+- 적재 거절(SQS 4xx)만 502(`-1009`)이고 보상은 미접수 확정과 같다. 적재 여부 불명은 202이며, 실제로 적재되지 않았다면
+  유실 타이머가 종결한다. AI 거절은 응답이 아니라 폴링 FAILED(`-1009`)로 보인다.
+- worker(`app.ai.dispatch.worker.enabled`)는 처리권(`timeline:draft-task:dispatch-claim:{taskId}`, `SET NX` 55s) →
+  task가 `DISPATCH_PENDING`인지 → 접수 대기 예산(60s, `processingStartedAt` 기준) → 세션 생성 허가 → 새 token으로
+  `INPUT_PENDING` 전이(`SET XX KEEPTTL`) → 접수 순서로 처리한다. 전이를 접수 **전에** 하므로 재전달은 단계 검사에서
+  버려지고 같은 task가 AI에 두 번 가지 않는다. 처리권 수명이 visibility(60s)보다 짧아, 처리권을 잡고 전이 전에 죽은
+  메시지는 재전달 때 다시 접수된다.
+- 예산 초과와 미접수 확정은 inline과 같은 보상(환불 `DISPATCH_REJECTED`·정리·FAILED `-1009`)이고, UNKNOWN은 재전송
+  없이 PROCESSING을 유지한다. throttle은 같은 실행 안에서 1s·2s·4s(+jitter) 뒤 허가를 다시 받아 최대 3번 재시도한다.
+- 허가 대기 초과·Redis 오류처럼 접수 전에 실패하면 처리권을 풀고 5초 뒤 다시 받는다. 해석할 수 없는 메시지는 건드리지
+  않아 `maxReceiveCount`(5) 뒤 DLQ로 간다.
+- 구버전 서버는 `DISPATCH_PENDING`을 역직렬화하지 못해 폴링·진행 목록·유실 처리가 500이 된다. 그래서 모든 인스턴스가
+  이 값을 읽는 버전이 된 뒤에만 `queue`를 켜고, 코드 롤백은 `DISPATCH_PENDING` task가 남지 않은 뒤에만 한다.
 
 같은 날짜의 draft, 수동 Event 생성/편집(non-empty `photosToAdd` 포함), Event/DailyRecord DELETE
 사이에는 공통 Redis admission guard가 없다. `timeline:date-guard:*` key는 더 이상 읽거나 쓰지 않아
@@ -332,6 +357,10 @@ record인지는 따지지 않는다 — append UX가 없어 빈 DRAFT는 재사�
   하나뿐이고**, 그 판정은 재료를 실제로 읽는 `dispatch`가 한다 — 일부만 사라진 경우도 같은 자리에서
   걷어낸다. 접수 body에서 빠지는 순간 결과 endpoint가 지울 근거를 잃기 때문이다. 4xx 거절은 남긴다
   (계약 불일치처럼 우리 배포로 풀리는 4xx가 있어, 지우면 고친 뒤에도 그 날은 복구되지 않는다).
+- **세션 생성 한도는 TIMELINE과 나눠 쓴다**(#515). 접수마다 AgentCore 세션이 새로 생기므로 task 저장 직전에 세션
+  생성 허가를 받는다(최대 10s). 못 받거나 limiter의 Redis가 실패하면 task 없이 그 사용자를 이번 실행에서 미룬다(날은
+  큐에 남고 guard는 TTL이 반납). throttle 거절은 같은 요청을 1s·2s·4s(+jitter) 뒤 최대 3번 다시 보내고, 다 쓰면 4xx
+  거절과 같이 처리한다. User Memory는 SQS 대기열을 쓰지 않는다.
 - 큐 항목은 **최초 기록 시각을 유지한다**(ZADD NX). 재시도로 다시 기록돼도 시한이 연장되지 않아야
   영영 안 되는 날이 `retention`(기본 30일)에 걸려 정리된다. 만료분 청소는 읽기와 쓰기 양쪽에 있어,
   배치가 멈춘 사이에도 key가 무한히 자라지 않는다.
@@ -368,6 +397,8 @@ record인지는 따지지 않는다 — append UX가 없어 빈 DRAFT는 재사�
 - PROCESSING TTL(`PROCESSING_TTL`, task key 수명): 최초 PROCESSING 저장 기준 절대 5분(입력 조회·stage 전이는 `KEEPTTL`이라
   연장 없음) — 처리 기한보다 길어 유실 처리가 task를 읽어 정리·FAILED 종결할 수 있다(#593) /
   SUCCESS·FAILED TTL: 24시간 / source staging retention: 7일
+- 접수 대기열 경로(#515)는 처리 기한·PROCESSING TTL에 접수 대기 예산(`DISPATCH_QUEUE_WAIT_BUDGET`, 60s)을 더한다
+  (4분·6분, 둘 다 생성 기준). 예산 안에 접수된 task는 inline과 같은 AI 처리 시간을 확보한다. inline 경로의 값은 그대로다.
 - 처리 기한이 지나도록 결과·실패 보고가 없으면 유실 처리가 FAILED(`-1008`)로 종결한다(#565·#593 — 위 "유실 처리").
   PROCESSING key 만료는 그 처리마저 없었던 task(만료 알림 유실·기록 소비 뒤 타이머 잔존)의 마지막 회수이지 FAILED
   전이가 아니다 — scheduler 복구 없이 이후 폴링·콜백이 404(`-1001`)로 수렴한다. 만료 전에 task 조회를 통과한
@@ -418,7 +449,8 @@ record인지는 따지지 않는다 — append UX가 없어 빈 DRAFT는 재사�
   환불·FAILED로 종결 — ai-contract 참고). callback 자체가 유실된 경우도 마찬가지다(기록이 소비돼 PROCESSING TTL로 만료).
 - User Memory 갱신이 **끝내 안 된 날**(7일 retention 안에 반영 못 함)은 그 날의 내용이 memory에 영영
   반영되지 않는다. 저장은 됐으니 사용자가 다시 저장할 일도 없다. guard 충돌로 인한 누락은 대기 재시도가
-  없앴고, 남은 이 구멍은 재시도·순서 보장을 가진 MQ 도입과 함께 다룬다. 그전까지는 포기·FAILED를
+  없앴다. #515에서 User Memory는 접수 대기열에 넣지 않기로 했다 — 호출 시각·속도를 배치가 정하고 pending이 이미
+  재시도 대기열이라, 세션 생성 limiter만 TIMELINE과 공유한다. 남은 이 구멍은 별도 과제이며, 그전까지는 포기·FAILED를
   식별자 없이 aggregate count와 `dailyRecordId`/`taskId` 로그로만 관측한다.
 - 대기 중인 두 날짜가 경합하면 memory에 병합되는 순서가 정해지지 않는다. 누락이 아니라 순서 문제라
   수용한다.

@@ -115,6 +115,10 @@ public class RedisMirror implements DisposableBean {
         mirror("delete", key, t -> t.delete(key));
     }
 
+    void increment(String key) {
+        mirror("incr", key, t -> t.opsForValue().increment(key));
+    }
+
     void expire(String key, Duration ttl) {
         mirror("expire", key, t -> t.expire(key, ttl));
     }
