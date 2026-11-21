@@ -45,9 +45,11 @@ public class AiDispatchConfig {
         return new DispatchQueueWorker(timelineDispatchQueue, timelineQueuedDispatchHandler, slots, sleeper);
     }
 
+    // 대소문자를 무시한다 — 접수 경로·worker 빈의 @ConditionalOnProperty(havingValue)와 같은 비교여야 "QUEUE"·"TRUE"에서
+    // 경로 빈만 생기고 큐 빈이 빠지는 어긋남이 없다.
     @Configuration(proxyBeanMethods = false)
-    @ConditionalOnExpression("'${app.ai.dispatch.timeline.route:inline}' == 'queue' "
-            + "or '${app.ai.dispatch.worker.enabled:false}' == 'true'")
+    @ConditionalOnExpression("'${app.ai.dispatch.timeline.route:inline}'.equalsIgnoreCase('queue') "
+            + "or '${app.ai.dispatch.worker.enabled:false}'.equalsIgnoreCase('true')")
     static class TimelineDispatchQueueConfig {
 
         /** SQS queue URL — 리전 segment는 {@code aws.region}과 대조한다. */

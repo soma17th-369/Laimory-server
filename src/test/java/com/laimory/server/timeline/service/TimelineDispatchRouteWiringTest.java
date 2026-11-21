@@ -69,6 +69,18 @@ class TimelineDispatchRouteWiringTest {
     }
 
     @Test
+    void uppercaseQueueRouteWiresQueueLikeOtherSwitches() {
+        // @ConditionalOnProperty는 대소문자를 무시한다 — 큐 설정 조건도 같아야 경로 빈과 큐 빈이 함께 생긴다.
+        runner.withPropertyValues("app.ai.dispatch.timeline.route=QUEUE",
+                        "app.ai.dispatch.queue.timeline-url=" + QUEUE_URL)
+                .run(context -> {
+                    assertThat(context).hasNotFailed().hasSingleBean(DispatchQueue.class);
+                    assertThat(context.getBean(TimelineDispatchSubmitter.class))
+                            .isInstanceOf(QueuedTimelineDispatchSubmitter.class);
+                });
+    }
+
+    @Test
     void queueRouteWithoutQueueUrlFailsAtStartup() {
         runner.withPropertyValues("app.ai.dispatch.timeline.route=queue")
                 .run(context -> assertThat(context).hasFailed()
