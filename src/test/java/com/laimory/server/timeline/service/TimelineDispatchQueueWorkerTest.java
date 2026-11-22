@@ -62,7 +62,7 @@ import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
 
 /**
  * TIMELINE 대기열 worker(#515). 메시지 하나의 결과별 동작(접수는 {@code INPUT_PENDING} 전이 뒤에만, 미접수 확정·대기 예산
- * 초과는 inline 경로와 같은 보상)과 메시지 정리(삭제·잠시 뒤 재수신·dead-letter 방치), 실행 수 ≤ slot을 본다.
+ * 초과는 inline 경로와 같은 보상)과 메시지 정리(삭제·잠시 뒤 재수신), 실행 수 ≤ slot을 본다.
  * SQS는 client mock이고, 보상은 실물이며 그 leaf 협력자만 mock이다. limiter는 mock이되 throttle 재시도는 실물 로직을
  * 부른다(대기는 실제로 자지 않는다).
  */
@@ -325,12 +325,12 @@ class TimelineDispatchQueueWorkerTest {
     }
 
     @Test
-    void unparsableMessageIsLeftForDeadLetterWithoutTouchingRedis() {
-        worker.process(Message.builder().body("{not json").receiptHandle(RECEIPT).build());
+    void unparsableMessageIsDeletedWithoutTouchingRedis() {
+        // 연결된 task가 없어 다시 받아도 처리할 수 없다 — dead-letter 큐 없이 로그만 남기고 지운다.
+        worker.process(Message.builder().messageId("m-1").body("{not json").receiptHandle(RECEIPT).build());
 
         verify(timelineTaskService, never()).claimQueuedDispatch(anyString(), any());
-        verify(sqsClient, never()).deleteMessage(any(DeleteMessageRequest.class));
-        verify(sqsClient, never()).changeMessageVisibility(any(ChangeMessageVisibilityRequest.class));
+        assertDeleted();
     }
 
     /** long polling 흉내 — {@link #receivable}에서 요청 수만큼 주고, 빈 큐면 잠깐 쉬고 빈 응답을 준다. */

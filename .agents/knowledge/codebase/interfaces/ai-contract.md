@@ -98,7 +98,8 @@ Content-Type: application/json
   시도 2s·전체 5s 상한이고, 수신은 20s long polling이다. 적재 4xx만 미적재 확정이다.
 - 자격증명은 SDK 기본 체인(EC2 인스턴스 프로파일)이다. 본 큐에 `sqs:SendMessage`·`ReceiveMessage`·`DeleteMessage`·
   `ChangeMessageVisibility`·`GetQueueAttributes`가 필요하다.
-- 큐 설정(visibility 60s·`maxReceiveCount` 5·DLQ)은 코드 값과 맞물린다 — 처리권 TTL 55s가 visibility보다 짧다는 전제다.
+- 큐 설정 visibility 60s는 코드 값과 맞물린다 — 처리권 TTL 55s가 visibility보다 짧다는 전제다. 보관 기간은 10분(task
+  수명 6분보다 길게)이고 dead-letter 큐는 두지 않는다. 해석할 수 없는 메시지는 ERROR 로그 뒤 삭제한다.
   처리 순서·보상은 [timeline-draft](../runtime/timeline-draft.md) "접수 대기열 경로"가 소유한다.
 
 ### 2. 회전 Task Token과 Redis Process Stage

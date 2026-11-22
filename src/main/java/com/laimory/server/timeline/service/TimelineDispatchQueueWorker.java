@@ -37,7 +37,9 @@ import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
  *
  * <p>결과 분류는 inline 경로와 같다 — 미접수 확정은 환불·FAILED({@code -1009}), UNKNOWN은 PROCESSING 유지(재전송 없음,
  * 유실 타이머가 종결). throttle은 같은 실행 안에서 재시도한다. 처리가 끝난 메시지(접수·종결·중복)는 지우고, 접수 전
- * 실패는 {@link #RETRY_LATER_DELAY} 뒤 다시 받고, 해석할 수 없는 메시지는 건드리지 않아 dead-letter로 보낸다.
+ * 실패는 {@link #RETRY_LATER_DELAY} 뒤 다시 받는다. 해석할 수 없는 메시지는 연결된 task가 없어 다시 받아도 처리할 수
+ * 없으므로 ERROR 로그를 남기고 지운다. dead-letter 큐는 두지 않는다 — 메시지의 끝은 task 결과(접수·FAILED·만료)가
+ * 정하고, 오래 기다린 요청은 접수 대기 예산이 FAILED·환불로 끝내 사용자가 다시 요청한다.
  *
  * <p>poller 스레드 하나가 빈 slot 수만큼만 long polling으로 받아 이 worker가 소유한 executor에 넘긴다 — 내부 대기 작업이
  * 없고, 실행 수는 slot 수로 묶이며, API·scheduler pool과 격리된다. 종료 시 long poll을 interrupt하지 않는다 — SQS가 이미
@@ -231,9 +233,6 @@ public class TimelineDispatchQueueWorker implements SmartLifecycle {
                         .receiptHandle(message.receiptHandle())
                         .visibilityTimeout((int) RETRY_LATER_DELAY.toSeconds())
                         .build());
-                case LEAVE_FOR_DEAD_LETTER -> {
-                    // visibility 만료 뒤 재전달되다가 maxReceiveCount를 넘으면 dead-letter로 간다(포렌식 보존).
-                }
             }
         } catch (RuntimeException e) {
             // 지우지 못한 메시지는 visibility 뒤 다시 오고, 처리 단계 검사가 중복으로 버린다.
@@ -246,9 +245,10 @@ public class TimelineDispatchQueueWorker implements SmartLifecycle {
         try {
             message = TimelineDispatchMessage.decode(objectMapper, received.body());
         } catch (IllegalArgumentException e) {
-            log.error("timeline 대기열 메시지 해석 실패(dead-letter로 보낸다): receiveCount={} detail={}",
-                    receiveCount(received), e.getMessage());
-            return Outcome.LEAVE_FOR_DEAD_LETTER;
+            // 본문은 남기지 않는다 — 계약상 비밀이 없지만, 잘못 만든 메시지에 무엇이 들었는지 알 수 없다.
+            log.error("timeline 대기열 메시지 해석 실패(삭제한다): messageId={} receiveCount={} detail={}",
+                    received.messageId(), receiveCount(received), e.getMessage());
+            return Outcome.DONE;
         }
 
         String taskId = message.taskId();
@@ -292,7 +292,8 @@ public class TimelineDispatchQueueWorker implements SmartLifecycle {
                 return Outcome.DONE;
             }
         } catch (RuntimeException e) {
-            // 접수 전 실패(Redis·역직렬화 오류) — 처리권을 풀고 잠시 뒤 다시 받는다. 반복되면 dead-letter로 간다.
+            // 접수 전 실패(Redis·역직렬화 오류) — 처리권을 풀고 잠시 뒤 다시 받는다. Redis가 돌아오면 task 결과대로
+            // 정리된다(예산 초과면 FAILED·환불, task가 만료됐으면 건너뛰고 삭제).
             log.warn("timeline 대기열 접수 준비 실패(잠시 뒤 다시 받는다): taskId={} receiveCount={} error={}",
                     taskId, receiveCount(received), e.toString());
             releaseClaimQuietly(taskId);
@@ -329,11 +330,9 @@ public class TimelineDispatchQueueWorker implements SmartLifecycle {
     }
 
     private enum Outcome {
-        /** 처리가 끝났다(접수·종결·중복 판정 포함) — 메시지를 지운다. */
+        /** 처리가 끝났다(접수·종결·중복·해석 불가 포함) — 메시지를 지운다. */
         DONE,
-        /** 접수 전에 실패했다 — 잠시 뒤 다시 받는다. 반복되면 dead-letter로 간다. */
-        RETRY_LATER,
-        /** 해석할 수 없는 메시지다 — 건드리지 않아 visibility 만료 뒤 재전달되다가 dead-letter로 간다. */
-        LEAVE_FOR_DEAD_LETTER
+        /** 접수 전에 실패했다 — 잠시 뒤 다시 받는다. */
+        RETRY_LATER
     }
 }

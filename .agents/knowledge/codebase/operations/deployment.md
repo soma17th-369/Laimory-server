@@ -306,7 +306,7 @@ Flyway 전용 계정(`SPRING_FLYWAY_USER`)의 DDL 권한은 live 조회로 확�
   대상 Runtime 한정 `bedrock-agentcore:InvokeAgentRuntime` 부여(대상·영향·rollback 설명 후 별도 승인)
   ③ `.env`에 `APP_AI_MODE=agentcore`와 Runtime ARN·endpoint를 넣고 재배포다. rollback은 `.env`를 이전
   mode로 되돌리고 다시 재생성하는 것뿐이며, 이미 접수된 task는 AI 결과 또는 TTL이 종결한다.
-- TIMELINE 접수 대기열(#515) 활성화 순서: ① 큐·DLQ와 WAS role의 SQS 권한 준비(AWS 변경 — 별도 승인) ② 이 기능이 든
+- TIMELINE 접수 대기열(#515) 활성화 순서: ① 큐와 WAS role의 SQS 권한 준비(AWS 변경 — 별도 승인) ② 이 기능이 든
   버전을 **모든 인스턴스에** 배포(플래그 기본 off라 동작 불변) ③ `.env`에 큐 URL과
   `APP_AI_DISPATCH_WORKER_ENABLED=true`를 넣고 재생성 ④ 그다음 `APP_AI_DISPATCH_TIMELINE_ROUTE=queue`로 재생성.
   ②를 건너뛰고 queue를 켠 채 롤링하면 구버전 인스턴스가 `DISPATCH_PENDING` task를 읽지 못해 500이 된다.

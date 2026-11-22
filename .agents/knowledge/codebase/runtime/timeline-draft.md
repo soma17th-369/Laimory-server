@@ -121,8 +121,9 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
   메시지는 재전달 때 다시 접수된다.
 - 예산 초과와 미접수 확정은 inline과 같은 보상(환불 `DISPATCH_REJECTED`·정리·FAILED `-1009`)이고, UNKNOWN은 재전송
   없이 PROCESSING을 유지한다. throttle은 같은 실행 안에서 1s·2s·4s(+jitter) 뒤 허가를 다시 받아 최대 3번 재시도한다.
-- 허가 대기 초과·Redis 오류처럼 접수 전에 실패하면 처리권을 풀고 5초 뒤 다시 받는다. 해석할 수 없는 메시지는 건드리지
-  않아 `maxReceiveCount`(5) 뒤 DLQ로 간다.
+- 허가 대기 초과·Redis 오류처럼 접수 전에 실패하면 처리권을 풀고 5초 뒤 다시 받는다. 해석할 수 없는 메시지는 연결된
+  task가 없으므로 ERROR 로그 뒤 삭제한다. dead-letter 큐는 두지 않는다 — 메시지의 끝은 task 결과(접수·FAILED·만료)가
+  정하고, 오래 기다린 요청은 접수 대기 예산이 FAILED·환불로 끝내 사용자가 다시 요청한다.
 - 구버전 서버는 `DISPATCH_PENDING`을 역직렬화하지 못해 폴링·진행 목록·유실 처리가 500이 된다. 그래서 모든 인스턴스가
   이 값을 읽는 버전이 된 뒤에만 `queue`를 켜고, 코드 롤백은 `DISPATCH_PENDING` task가 남지 않은 뒤에만 한다.
 

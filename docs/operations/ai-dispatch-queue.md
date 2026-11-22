@@ -6,7 +6,7 @@ AgentCore 새 세션 생성 한도(계정·리전 25 TPS)를 두 인스턴스 �
 있게 했다. 기본값은 지금 동작(요청 스레드에서 바로 접수)이고, 아래 env를 넣어야 대기열을 쓴다. 동작 설명은
 [timeline-draft runtime](../../.agents/knowledge/codebase/runtime/timeline-draft.md) "접수 대기열 경로"가 소유한다.
 
-이 문서는 dev 활성화 절차를 다룬다. prod 절차·지표·경보·DLQ 운영은 아직 없다(#515 후속).
+이 문서는 dev 활성화 절차를 다룬다. prod 절차·지표·경보는 아직 없다(#515 후속).
 
 ## env 값
 
@@ -34,7 +34,8 @@ AgentCore 새 세션 생성 한도(계정·리전 25 TPS)를 두 인스턴스 �
 ## 사전 준비
 
 1. 이 기능이 든 버전이 dev에 배포돼 있다(플래그를 넣기 전에는 동작이 바뀌지 않는다).
-2. dev 큐 `laimory-dev-ai-dispatch-timeline`과 `-dlq`가 있다(visibility 60s, maxReceiveCount 5 — 코드 값과 맞물린다).
+2. dev 큐 `laimory-dev-ai-dispatch-timeline`이 있다(visibility 60s — 처리권 TTL 55s와 맞물린다, 보관 기간 10분).
+   dead-letter 큐는 두지 않는다.
 3. dev WAS 인스턴스 프로파일 role에 아래 권한이 있다.
 
 ```json
@@ -74,7 +75,7 @@ FAILED(`-1009`)·환불로 끝난다.
 | 정상 | 앱에서 생성 | 위 "켜기" 4번 |
 | 중복 전달 | SQS 콘솔에서 방금 처리된 task의 메시지를 본 큐로 다시 보낸다(본문 예시는 표 아래) | `timeline 대기열 메시지 건너뜀(이미 접수·종결·만료)`, AI 재호출 없음 |
 | 대기 예산 초과 | `APP_AI_DISPATCH_WORKER_ENABLED=false`(route는 queue)로 재생성 → 생성 → 1분 넘게 기다림 → worker를 다시 켜 재생성 | `timeline 접수 대기 예산 초과(접수하지 않고 종결)`, 폴링 FAILED(`-1009`), 크레딧 환불 |
-| 해석 불가 메시지 | 본 큐에 `not json`을 보낸다 | `timeline 대기열 메시지 해석 실패(dead-letter로 보낸다)`가 5번 찍힌 뒤(약 5분) DLQ로 이동 |
+| 해석 불가 메시지 | 본 큐에 `not json`을 보낸다 | `timeline 대기열 메시지 해석 실패(삭제한다)`가 한 번 찍히고 메시지가 사라진다 |
 | 되돌리기 | 아래 "끄기" | 다시 요청 스레드에서 바로 접수 |
 
 중복 전달 본문 — `taskId`는 `timeline 대기열 접수 완료` 로그의 값이다. worker는 task의 처리 단계를 먼저 보므로
