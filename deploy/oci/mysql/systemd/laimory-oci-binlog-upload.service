@@ -1,0 +1,15 @@
+[Unit]
+Description=Laimory OCI MySQL binlog upload to R2
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+TimeoutStartSec=300
+ExecStart=/usr/local/sbin/upload-oci-binlog
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+StateDirectory=laimory

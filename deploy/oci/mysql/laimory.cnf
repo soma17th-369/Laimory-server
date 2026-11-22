@@ -1,0 +1,40 @@
+# OCI host의 mysql 컨테이너(mysql:8.0.46) 설정. compose가 /etc/mysql/conf.d/laimory.cnf로 읽기 전용 마운트한다.
+# prod(AWS)의 replica로 따라가는 기간의 설정이다 — 승격(전환) 때 read_only·super_read_only·replicate_* 를 바꾼다.
+[mysqld]
+# prod는 1, prod binlog 스트림 클라이언트가 1358을 쓴다.
+server_id = 2
+
+# prod와 같은 값을 명시해 고정한다(lower_case_table_names는 datadir 초기화 시점 값이라 바꿀 수 없다).
+character_set_server = utf8mb4
+collation_server = utf8mb4_0900_ai_ci
+lower_case_table_names = 0
+# time_zone은 SYSTEM(UTC) 그대로 둔다 — 앱은 서울 벽시계로 DATETIME을 쓰고 DB는 UTC다. 컨테이너에 TZ를 주지 않는다.
+sql_mode = ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+
+# 데이터는 수십 MB 수준이다. prod의 2G는 과하다.
+innodb_buffer_pool_size = 1G
+
+log_bin = binlog
+binlog_format = ROW
+binlog_row_image = FULL
+# 로컬 binlog는 7일만 둔다. 오프호스트 사본(R2)은 35일이다.
+binlog_expire_logs_seconds = 604800
+sync_binlog = 1
+innodb_flush_log_at_trx_commit = 1
+
+# 복제로 받은 변경도 이 서버의 binlog에 남긴다 — 그래야 복제 기간에 뜬 백업과 승격 후 백업이
+# 같은 binlog 사슬로 이어져 PITR이 끊기지 않는다.
+log_replica_updates = ON
+relay_log = relay-bin
+# 크래시 뒤 relay log를 버리고 source에서 다시 받는다.
+relay_log_recovery = ON
+
+# laimory 스키마의 테이블을 명시한 이벤트만 적용한다. prod에서 CREATE USER/GRANT 같은 계정 문장이
+# 복제되면 이 서버에 그 계정이 없어 1396으로 복제가 멈춘다. do-table 규칙만 있을 때 테이블을 명시하지
+# 않는 문장은 무시된다(매뉴얼). mysql.% ignore 규칙은 GRANT를 막지 못한다.
+# CHANGE REPLICATION FILTER로 건 필터는 재시작하면 사라지므로 설정 파일에 둔다.
+replicate_wild_do_table = laimory.%
+
+# 복제 기간에는 로컬 쓰기를 막는다(복제 스레드는 영향 없음). 로컬 계정 생성은 스크립트가 잠깐 풀었다가 다시 켠다.
+read_only = ON
+super_read_only = ON
