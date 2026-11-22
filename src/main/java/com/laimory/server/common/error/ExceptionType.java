@@ -74,6 +74,11 @@ public enum ExceptionType {
      * 크레딧은 범용 재화지만 첫 소비처가 timeline이라 이 대역의 다음 번호를 쓴다(-1019는 결번).
      */
     INSUFFICIENT_CREDIT(-1021, HttpStatus.FORBIDDEN, Level.INFO),
+    /**
+     * AI가 수집 입력에서 타임라인 Event를 하나도 만들지 못함(#658) — 장애가 아니라 그날 기록의 결과다.
+     * task 실패 분류 전용이라 throw하지 않고 작업 상태 조회 {@code body.error}로만 나간다(status는 명목값).
+     */
+    AI_REPORTED_NO_EVENTS(-1022, HttpStatus.UNPROCESSABLE_ENTITY, Level.INFO),
 
     // ── terms ──
     /** 동의 요청의 (termType, version)이 존재하지 않거나 현재 유효 버전이 아님 — 전체 미기록·재조회 신호. */

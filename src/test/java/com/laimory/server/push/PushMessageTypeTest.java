@@ -2,7 +2,9 @@ package com.laimory.server.push;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
 
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.LocalDate;
 import org.junit.jupiter.api.Test;
@@ -35,6 +37,22 @@ class PushMessageTypeTest {
         assertThat(success.body()).isEqualTo("타임라인이 준비됐어요.");
         assertThat(failed.title()).isEqualTo("타임라인 생성 실패");
         assertThat(failed.body()).isEqualTo("타임라인을 만들지 못했어요. 앱에서 다시 시도해 주세요.");
+    }
+
+    @Test
+    void timelineFailureWithNoEventsUsesNoEventsTypeWithFailedStatusData() {
+        // 0건은 장애가 아니라 결과다 — "다시 시도" 문구가 나가지 않게 종류를 나눈다(#658). 앱 조회용 data는 일반 실패와 같다.
+        PushMessage message = PushMessage.timelineFailure("t-1", ExceptionType.AI_REPORTED_NO_EVENTS);
+
+        assertThat(message.type()).isEqualTo(PushMessageType.TIMELINE_COMPLETION_NO_EVENTS);
+        assertThat(message.copy().body()).isEqualTo("타임라인을 만들 정보가 부족해요.");
+        assertThat(message.data()).containsOnly(entry("taskId", "t-1"), entry("status", "FAILED"));
+    }
+
+    @Test
+    void timelineFailureWithOtherFailureTypeUsesGenericFailedMessage() {
+        assertThat(PushMessage.timelineFailure("t-1", ExceptionType.AI_REPORTED_FAILURE))
+                .isEqualTo(PushMessage.timelineCompletion("t-1", TaskStatus.FAILED));
     }
 
     @Test

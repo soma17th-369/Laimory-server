@@ -35,6 +35,7 @@ public class TimelineTaskService {
 
     static final Set<ExceptionType> TASK_FAILURE_TYPES = Collections.unmodifiableSet(EnumSet.of(
             ExceptionType.AI_REPORTED_FAILURE,
+            ExceptionType.AI_REPORTED_NO_EVENTS,
             ExceptionType.AI_DISPATCH_FAILED,
             ExceptionType.DRAFT_TASK_FAILURE_FALLBACK));
     private static final Map<Integer, ExceptionType> TASK_FAILURE_TYPES_BY_CODE = TASK_FAILURE_TYPES.stream()
@@ -93,7 +94,7 @@ public class TimelineTaskService {
     }
 
     /**
-     * task를 FAILED로 종결한다. {@code failureType}은 task 실패 분류 세 타입만
+     * task를 FAILED로 종결한다. {@code failureType}은 task 실패 분류({@link #TASK_FAILURE_TYPES})만
      * 허용한다 — raw 문자열을 받지 않아, 내부 예외 메시지가 폴링 {@code body.error}로 유출되는 경로를
      * 시그니처에서 차단한다(상세는 호출부가 로그로만 남긴다).
      */

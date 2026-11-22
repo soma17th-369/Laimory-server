@@ -154,7 +154,8 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
    FAILED는 terminal 저장 **전에** 크레딧을 환불(`AI_FAILED`)한다 — 환불 실패는 500으로 AI 재전송에 맡기고, 기록이
    `CHARGED`일 때만 환불하므로 terminal 저장 실패 뒤의 재전송도 한 번만 환불한다. 환불 다음, terminal 저장 전에
    실패 draft 정리를 한다 — 정리 실패도 환불처럼 500으로 전파하며, AI 재전송은 이미 끝난 환불을 건너뛰고 정리만 다시
-   시도한다. terminal 저장 뒤 유실 타이머를 지운다(실패는 로그만).
+   시도한다. terminal 저장 뒤 유실 타이머를 지운다(실패는 로그만). FAILED `errorCode`는 AI 양수 코드이며 이벤트
+   0건 `1211`만 `-1022`, 그 밖은 `-1008`로 저장하고, 실패 완료 푸시는 저장한 분류로 문구를 고른다(0건 전용 — #658).
 4. terminal 저장 실패는 전파된다. terminal로 저장된 현재 token으로 같은 콜백을 다시 보낼 수 있다.
 5. **유실 처리**(#565·#593): 결과도 FAILED callback도 없이 처리 기한(3분)이 지나면 유실 타이머가 만료된다. 환경 안의 모든
    서버가 keyspace `expired` 알림을 구독하고(`RedisKeyExpirationSubscriber` → `TimelineTaskLossHandler`), 유실 처리 잠금
@@ -213,7 +214,7 @@ record인지는 따지지 않는다 — append UX가 없어 빈 DRAFT는 재사�
   `-1001`과 구분). polling 선검증 뒤 조립 서비스의
   권위 재조회 전에 record가 삭제돼도 `DRAFT_RESULT_NOT_FOUND`로 변환해 catch-all 500을 내지 않는다.
 - PROCESSING polling은 `processingStartedAt` 기준 경과 완료 초를 `elapsedSeconds`로 반환한다(음수 0 clamp,
-  terminal은 필드 생략). FAILED의 `body.error`는 numeric 분류 코드(`-1008`/`-1009`/`-1011`)만
+  terminal은 필드 생략). FAILED의 `body.error`는 numeric 분류 코드(`-1008`/`-1009`/`-1011`/`-1022`)만
   나간다. Redis writer와 reader는 JSON number만 사용한다. 누락·양수·allowlist 밖 numeric 값은
   `-1011`로 수렴하고 문자열 값은 역직렬화를 거부한다.
 - 하루 타임라인 및 Event 단건 조립(`DailyTimelineService`)은 읽기 전용이며 사용자 전체도 record별 단건
