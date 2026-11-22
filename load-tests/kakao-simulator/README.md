@@ -45,7 +45,7 @@ webhook 콜백 URL·SG 인바운드는 test WAS를 향하며, mapping은 한 벌
 서버의 `HttpTimelineAiDispatcher`·user-memory dispatcher가 보내는 dispatch를 202로 접수하고, WireMock
 core webhook(3.1.0+ 내장, 별도 extension 불필요)으로 지연 뒤 서버 콜백 endpoint를 호출한다.
 
-| stub | 요청 매칭(불일치는 404) | 접수 응답(50ms 지연) | webhook(접수 후 2000ms 지연, 단발) |
+| stub | 요청 매칭(불일치는 404) | 접수 응답(50ms 지연) | webhook(접수 후 60000ms 지연, 단발) |
 |---|---|---|---|
 | `ai-timeline-dispatch` | `POST /v1/timeline`, body에 `taskId`·`taskToken`·`dailyRecordId`·`window.startAt` 필수 | `202 {"taskId":"<요청 taskId echo>","status":"PROCESSING"}` | `POST {WAS}/s/api/v1/timeline/drafts/{taskId}/callback`, header `Task-Token: <요청 taskToken>`, body `{"status":"FAILED","errorCode":-1008,"error":"kakao-simulator fake AI"}` |
 | `ai-user-memory-dispatch` | `POST /v1/user-memory`, body에 `taskId`·`taskToken`·`dailyTimelines` 필수 | 동일 형식 echo | `POST {WAS}/s/api/v1/user-memory/updates/{taskId}/result`, 접수 `Task-Token` 그대로, body `{"status":"SUCCESS","userMemory":{…stub 고정 문서…},"errorCode":null,"error":null}` |
@@ -79,8 +79,8 @@ APP_AI_HTTP_BASE_URL=http://SIMULATOR_PRIVATE_IP:8080
 WAS SG의 시뮬레이터 SG 소스 허용이 담당한다 — 둘 다 #400 Phase 1에서 적용됐다. geo만 측정하는 #251 부하
 테스트에서는 기존대로 `APP_AI_MODE=noop`을 유지한다.
 
-기대 루프: draft 생성 → 202 접수 → 약 2초 뒤 FAILED 콜백 → 폴링이 FAILED 반환.
-user-memory 배치 dispatch는 약 2초 뒤 result 저장까지 자동 완료된다.
+기대 루프: draft 생성 → 202 접수 → 약 60초 뒤 FAILED 콜백 → 폴링이 FAILED 반환.
+user-memory 배치 dispatch는 약 60초 뒤 result 저장까지 자동 완료된다. 계약 검증(C13)만 2초 지연의 임시 mapping을 쓴다.
 
 ### 실 AI와의 차이
 
@@ -107,6 +107,7 @@ load-tests/kakao-simulator/
 │   └── keyword-response.json
 ├── simulator-preflight.js
 └── scripts/
+    ├── ai-dispatch-rate.py   # journal로 AI 접수 송신률 판정(#515)
     └── verify-contract.sh
 ```
 

@@ -6,7 +6,9 @@ AgentCore 새 세션 생성 한도(계정·리전 25 TPS)를 두 인스턴스 �
 있게 했다. 기본값은 지금 동작(요청 스레드에서 바로 접수)이고, 아래 env를 넣어야 대기열을 쓴다. 동작 설명은
 [timeline-draft runtime](../../.agents/knowledge/codebase/runtime/timeline-draft.md) "접수 대기열 경로"가 소유한다.
 
-이 문서는 dev 활성화 절차를 다룬다. prod 절차·지표·경보는 아직 없다(#515 후속).
+이 문서는 dev 활성화 절차를 다룬다. test 환경 부하 검증(어느 1초 25건 이하)은
+[타임라인 부하 테스트 runbook](../../load-tests/timeline-draft/README.md) "접수 대기열 송신률 검증"에 있다.
+prod 절차·지표·경보는 아직 없다(#515 후속).
 
 ## env 값
 

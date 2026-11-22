@@ -443,6 +443,128 @@ rm -f load-tests/timeline-draft/.artifacts/tokens.json \
 load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 ```
 
+## 접수 대기열 송신률 검증 (#515)
+
+TIMELINE AI 접수를 SQS 대기열 뒤로 보낸 상태(`APP_AI_DISPATCH_TIMELINE_ROUTE=queue`)에서 세 가지를 본다.
+
+- 서버를 떠난 접수가 **어느 1초 구간에도 25건을 넘지 않는다**(#515 AC2).
+- 한꺼번에 몰린 N건이 다 나가는 데 걸리는 시간이 예상(평균 초당 20건)과 맞다.
+- 같은 task가 AI에 두 번 나가지 않는다.
+
+측정 지점은 가짜 AI(#257 simulator) journal의 수신 시각이다. 세션 생성 limiter는 transport 앞에 있으므로
+이 분포가 곧 AgentCore가 받을 분포다. 동작 설명은 [timeline-draft runtime](../../.agents/knowledge/codebase/runtime/timeline-draft.md)
+"접수 대기열 경로", env 값의 의미는 [접수 대기열 runbook](../../docs/operations/ai-dispatch-queue.md)이 소유한다.
+
+### 준비 — AWS·host 변경은 사용자가 직접 수행한다
+
+1. test 배포에 이 기능이 들어 있다(`.env`의 `APP_COMMIT_SHA`로 확인).
+2. test 큐 `laimory-test-ai-dispatch-timeline`이 있다. Standard, visibility 60s, 보관 10분, 수신 대기 20s,
+   SSE-SQS이고 dead-letter 큐는 두지 않는다. test WAS role에는 runbook의 SQS 정책을 이 큐 이름으로 붙인다.
+3. test host `.env`에 다음을 넣고 재생성한다.
+
+   ```text
+   APP_AI_DISPATCH_QUEUE_TIMELINE_URL=https://sqs.ap-northeast-2.amazonaws.com/<계정 ID>/laimory-test-ai-dispatch-timeline
+   APP_AI_DISPATCH_WORKER_ENABLED=true
+   APP_AI_DISPATCH_TIMELINE_ROUTE=queue
+   ```
+
+   - `APP_AI_DISPATCH_LIMITER_PERMITS`는 넣지 않는다. 기본값 5(어느 1초 최대 25건)를 그대로 잰다.
+   - test는 WAS 1대이고 외부 유입이 없어 worker와 route를 한 번에 켜도 된다. 여러 대 환경의 켜는 순서는 runbook을 따른다.
+   - `APP_AI_MODE=http`(simulator)는 그대로 둔다. 실제 AI로 나가지 않는다.
+   - 재생성은 `sudo load-tests/timeline-draft/scripts/dev-recreate.sh`로 한다. `.env` 경로나 컨테이너 이름이 다르면
+     `LAIMORY_ENV_FILE`·`LAIMORY_CONTAINER`로 지정한다.
+   - 로그에 `AI 접수 대기열 worker 시작: slots=16`이 보여야 한다.
+4. simulator EC2를 켜고 health 200을 확인한다. `mappings/ai-timeline.json`의 콜백 URL IP가 test WAS private IP와
+   같아야 한다. 콜백은 접수 60초 뒤 FAILED(`-1008`) 단발이라 측정 task는 전부 FAILED로 끝나는 것이 정상이다.
+5. 합성 사용자·subject·token을 위 1~4단계로 준비한다(회차 최대 VUS만큼).
+6. simulator의 8080은 WAS에서만 열려 있으므로 journal은 SSM port forwarding으로 실행기에서 읽는다.
+
+   ```bash
+   aws ssm start-session --target <simulator instance ID> \
+     --document-name AWS-StartPortForwardingSession \
+     --parameters '{"portNumber":["8080"],"localPortNumber":["18080"]}'
+   ```
+
+### 회차
+
+회차마다 `STEP_INDEX`를 바꾼다. 같은 사용자의 같은 날짜를 다시 쓰지 않기 위해서다.
+
+1. journal을 비운다.
+
+   ```bash
+   curl -s -X DELETE http://127.0.0.1:18080/__admin/requests
+   ```
+
+2. 발사한다.
+
+   ```bash
+   RUN_ID=20261123-01 BASE_URL=https://test.laimory.app VUS=300 STEP_INDEX=2 CONFIRM_AI_SIMULATOR=yes \
+     k6 run load-tests/timeline-draft/k6/calendar-core.js
+   ```
+
+3. 다 나갈 때까지 약 `VUS ÷ 20 + 10`초 기다린다. SQS 콘솔에서 본 큐의 available·in flight가 0이 됐는지 본다.
+4. journal을 저장하고 판정한다. `--expected`에는 k6 결과에서 202를 받은 수를 넣는다.
+
+   ```bash
+   curl -s http://127.0.0.1:18080/__admin/requests > load-tests/timeline-draft/.artifacts/journal-300.json
+   python3 load-tests/kakao-simulator/scripts/ai-dispatch-rate.py \
+     load-tests/timeline-draft/.artifacts/journal-300.json --expected 300
+   ```
+
+5. test host에서 로그를 센다.
+
+   ```bash
+   for p in '대기열 접수 완료' '수신 실패' '허가 대기 초과' '대기 예산 초과' 'enqueue rejected' 'enqueue outcome unknown'; do
+     printf '%s: ' "$p"; sudo docker logs --since 10m laimory 2>&1 | grep -c "$p"
+   done
+   ```
+
+   `대기열 접수 완료`는 VUS와 같고 나머지는 0이어야 한다.
+6. 다음 회차 전에 2분 이상 쉰다(콜백 60초 + 여유).
+
+| 회차 | VUS | 다 나가는 시간(예상) | 볼 것 |
+|---|---|---|---|
+| calibration | 1 | 바로 | 도착 1건, `대기열 접수 완료` 1건 |
+| 1 | 100 | 약 5초 | 어느 1초 최대 ≤ 25 |
+| 2 | 300 | 약 15초 | 어느 1초 최대 ≤ 25, 평균 약 20건/초 |
+| 3 | 1,000 | 약 50초 | 위와 같음. 접수 대기 예산(60초)에 가까운 경계라 `대기 예산 초과`가 나오면 그 수를 기록한다 |
+
+### 판정 기준
+
+| 항목 | 기준 | 출처 |
+|---|---|---|
+| 어느 1초 최대 도착 | 25 이하 | 분석 스크립트 |
+| 도착 수 | k6에서 202를 받은 수와 같음 | 분석 스크립트 `--expected` |
+| 중복 taskId | 0 | 분석 스크립트 |
+| 평균 송신률 | 약 20건/초(250ms 창마다 5건) | 분석 스크립트 |
+| 202 비율 | 99% 이상 | k6 `draft_accepted` |
+| 큐 잔여 | available·in flight 0 | SQS 콘솔 |
+| 오류 로그 | 5단계의 실패 문구 0 | test host 로그 |
+
+### 선택: 실제 응답 지연에서 slot이 막히는지
+
+simulator 접수 응답은 50ms라 처리 slot 16개가 병목이 되지 않는다. 필요한 slot 수는 대략 "초당 송신 × 응답
+시간"이라, AgentCore 응답이 느리면 slot이 먼저 막힌다. `mappings/ai-timeline.json`의 `fixedDelayMilliseconds`를
+실측 AgentCore 응답 시간(예: 800)으로 바꿔 simulator container를 재생성하고 300 회차를 다시 돈다. 평균 송신률이
+초당 20건보다 눈에 띄게 낮으면 slot이 병목이다. 끝나면 50으로 되돌린다.
+
+### 한계
+
+- test WAS는 1대다. 두 대 합산은 `SessionCreationRateLimiterIntegrationTest`(연결이 다른 limiter 2개)가 본다.
+- simulator 수신 시각과 AgentCore 수신 시각은 네트워크 경로만큼(수 ms) 다르다.
+- AgentCore throttle과 세션 cold start는 재현하지 않는다.
+
+### 정리
+
+- DB·Redis 정리는 9단계와 같다. 다만 큐 경로 task의 PROCESSING 수명은 6분이라 Redis 잔여는 마지막 회차 7분 뒤에 본다.
+- journal에는 요청 body(taskToken)가 들어 있으므로 판정이 끝나면 지운다.
+
+  ```bash
+  rm -f load-tests/timeline-draft/.artifacts/journal-*.json
+  ```
+
+- test에서 큐 경로를 끄려면 runbook "끄기" 순서를 따른다.
+
 ## 환경변수
 
 | 이름 | 필수 | 기본값 | 설명 |
