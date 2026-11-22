@@ -1,0 +1,22 @@
+{
+  "template_name": "laimory-discord",
+  "template": "{{ define \"laimory.discord.title\" -}}\n[{{ .Status }}] {{ .CommonLabels.environment }} {{ .CommonLabels.alertname }}\n{{- end }}\n{{ define \"laimory.discord.message\" -}}\n{{ range .Alerts -}}\n{{ .Annotations.summary }}\n{{ .Annotations.description }}\nseverity={{ .Labels.severity }} environment={{ .Labels.environment }} job={{ .Labels.job }} instance={{ .Labels.instance }}\nrunbook={{ .Annotations.runbook_url }}\n{{ end -}}\n{{- end }}\n",
+  "contact_point": {
+    "uid": "laimory_discord",
+    "name": "Discord"
+  },
+  "policy": {
+    "receiver": "Discord",
+    "group_by": ["grafana_folder", "alertname", "environment"],
+    "group_wait": "30s",
+    "group_interval": "5m",
+    "repeat_interval": "4h",
+    "routes": [
+      {
+        "receiver": "Discord",
+        "object_matchers": [["notify_once", "=", "true"]],
+        "repeat_interval": "8760h"
+      }
+    ]
+  }
+}
