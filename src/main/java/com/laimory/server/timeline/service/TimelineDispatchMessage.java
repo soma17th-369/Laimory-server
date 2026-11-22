@@ -1,6 +1,7 @@
 package com.laimory.server.timeline.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.timeline.dto.AiTimelineDispatchRequest;
 
@@ -27,5 +28,29 @@ public record TimelineDispatchMessage(String requestType, String taskId, long da
             // 식별자와 시각뿐이라 일어나지 않아야 한다. 메시지 원문을 예외에 싣지 않는다.
             throw new IllegalStateException("TIMELINE 대기열 메시지를 직렬화하지 못했습니다: taskId=" + taskId);
         }
+    }
+
+    /** 해석할 수 없거나 계약에 맞지 않으면 {@link IllegalArgumentException}이다. */
+    static TimelineDispatchMessage decode(ObjectMapper objectMapper, String body) {
+        TimelineDispatchMessage message;
+        try {
+            // Jackson 기본값은 OffsetDateTime을 UTC로 바꿔 읽는다. window는 POST 시점의 record timezone offset이 계약
+            // (AI 접수 body의 "+09:00" 형식)이라 offset을 보존해 읽는다.
+            message = objectMapper.readerFor(TimelineDispatchMessage.class)
+                    .without(DeserializationFeature.ADJUST_DATES_TO_CONTEXT_TIME_ZONE)
+                    .readValue(body);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("TIMELINE 대기열 메시지를 해석할 수 없습니다");
+        }
+        boolean valid = message != null
+                && REQUEST_TYPE.equals(message.requestType())
+                && message.taskId() != null && !message.taskId().isBlank()
+                && message.dailyRecordId() > 0
+                && message.window() != null
+                && message.window().startAt() != null && message.window().endAt() != null;
+        if (!valid) {
+            throw new IllegalArgumentException("TIMELINE 대기열 메시지 계약 불일치");
+        }
+        return message;
     }
 }

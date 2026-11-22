@@ -11,8 +11,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * AgentCore 새 세션 생성률 limiter(#515). 접수 1건이 세션 1개를 새로 만들므로(session id = prefix + taskId), 모든
- * 인스턴스의 접수를 Redis 카운터 하나로 묶어 계정·리전 한도(25 TPS) 안에 둔다. User Memory 배치가 접수마다 허가를
- * 받는다.
+ * 인스턴스의 접수를 Redis 카운터 하나로 묶어 계정·리전 한도(25 TPS) 안에 둔다. TIMELINE 대기열 worker와 User Memory
+ * 배치가 같은 카운터를 쓴다.
  *
  * <p>250ms 고정 창마다 {@code INCR}로 세고 창당 {@code L}건까지 허가한다. 반열린 1초 구간은 창 5개에 걸칠 수 있으므로
  * 어느 1초를 잘라도 최대 {@code 5L}건, 평균은 {@code 4L}건/초다. 1초 창에 25를 주면 창 경계를 사이에 두고 1초 안에

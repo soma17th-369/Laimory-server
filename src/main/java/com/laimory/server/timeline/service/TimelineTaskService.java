@@ -97,6 +97,19 @@ public class TimelineTaskService {
     }
 
     /**
+     * 대기열 메시지 하나의 접수 처리권을 잡는다(#515, {@code SET NX PX}). SQS 중복 전달이 동시에 처리돼 같은 task를
+     * AI에 두 번 보내는 것을 막는다. 잡지 못하면 다른 worker가 처리 중이다.
+     */
+    public boolean claimQueuedDispatch(String taskId, Duration ttl) {
+        return timelineTaskStore.claimQueuedDispatch(taskId, ttl);
+    }
+
+    /** 접수 전에 실패해 메시지를 다시 처리하게 할 때 처리권을 푼다. */
+    public void releaseQueuedDispatchClaim(String taskId) {
+        timelineTaskStore.releaseQueuedDispatchClaim(taskId);
+    }
+
+    /**
      * PROCESSING task 내부 상태(token hash·stage·retry receipt)를 교체한다. native {@code SET XX KEEPTTL}
      * 이라 최초 PROCESSING 저장이 정한 만료 시각을 보존한다 — {@code processingStartedAt}도 그대로라
      * 폴링 {@code elapsedSeconds}·task 만료·stuck 관측이 전부 최초 시작 기준으로 일치한다.
