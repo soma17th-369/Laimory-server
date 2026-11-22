@@ -77,11 +77,29 @@ Content-Type: application/json
 - 실패 분류는 §1과 같은 두 갈래다. **미접수 확정**: 전송 전 자체 검증 실패(session id·직렬화), service의
   pre-invocation 4xx(Validation·AccessDenied·ResourceNotFound·Throttling·ServiceQuotaExceeded), AI
   runtime의 4xx ack. **UNKNOWN**: RetryableConflict·RuntimeClientError·5xx·timeout·전송 실패·ack 계약 불일치.
+  용량 한도 거절(Throttling·Throttled·ServiceQuotaExceeded)은 미접수 확정의 하위 분류
+  `TimelineAiDispatchThrottledException`이다(#515). inline draft 접수는 거절과 같이 처리하고, 접수 대기열 worker와
+  User Memory 배치는 같은 token으로 1s·2s·4s(+jitter) 뒤 세션 생성 허가를 다시 받아 최대 3번 재시도한다.
+- 세션 생성 limiter(#515): 접수 1건이 새 session 1개라(`prefix + taskId`) TIMELINE 대기열 worker와 User Memory 배치는
+  접수 전에 Redis 250ms 창 카운터의 허가를 받는다(창당 `APP_AI_DISPATCH_LIMITER_PERMITS`, 어느 1초든 최대 5배).
+  inline draft 접수는 허가를 받지 않는다 — 합산 한도 보장은 TIMELINE `route=queue`일 때만 성립한다.
 - 접수 대기 상한은 흐름별로 dispatcher가 요청마다 건다(#600 — client 하나를 공유하므로 client 기본값은 없다):
   timeline `apiCallAttemptTimeout` 5s·`apiCallTimeout` 7s(사용자 요청 스레드, 앱 draft POST 상한 10초 안),
   User Memory 15s·20s(배치 스레드, 새 session cold start 흡수). 둘 다 각 처리 기한(3분)의 절반보다 짧아야 기동한다. **SDK 자동 재시도는 꺼둔다** — 접수는 멱등이 아니라 재전송이 같은 taskId 이중 접수를 만든다.
 - 이 transport의 인증은 IAM이다(runtime role의 `bedrock-agentcore:InvokeAgentRuntime`, 대상 Runtime 한정).
   §1의 "AI endpoint 무인증" 한계는 HTTP mode에만 해당한다.
+
+### 1b. TIMELINE 접수 대기열 (`app.ai.dispatch.timeline.route=queue`, #515)
+
+- 접수 경로는 transport(`app.ai.mode`)와 독립이다. `queue`면 draft POST가 SQS Standard 대기열에
+  `{"requestType":"TIMELINE","taskId","dailyRecordId","window":{"startAt","endAt"}}`만 적재하고(token·원문 없음),
+  worker가 접수 직전에 token을 만들어 §1 body로 같은 dispatcher를 호출한다. AI가 받는 요청은 inline과 같다.
+- SQS 호출은 SDK 기본 재시도를 유지한다(중복 적재는 worker의 처리권·처리 단계 검사가 버린다). 적재는 요청 스레드라
+  시도 2s·전체 5s 상한이고, 수신은 20s long polling이다. 적재 4xx만 미적재 확정이다.
+- 자격증명은 SDK 기본 체인(EC2 인스턴스 프로파일)이다. 본 큐에 `sqs:SendMessage`·`ReceiveMessage`·`DeleteMessage`·
+  `ChangeMessageVisibility`·`GetQueueAttributes`가 필요하다.
+- 큐 설정(visibility 60s·`maxReceiveCount` 5·DLQ)은 코드 값과 맞물린다 — 처리권 TTL 55s가 visibility보다 짧다는 전제다.
+  처리 순서·보상은 [timeline-draft](../runtime/timeline-draft.md) "접수 대기열 경로"가 소유한다.
 
 ### 2. 회전 Task Token과 Redis Process Stage
 
