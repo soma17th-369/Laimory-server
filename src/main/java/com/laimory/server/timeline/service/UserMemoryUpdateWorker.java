@@ -102,6 +102,7 @@ public class UserMemoryUpdateWorker {
     private final TimelineEventService timelineEventService;
     private final UserMemoryService userMemoryService;
     private final UserMemoryUpdateDispatcher dispatcher;
+    private final SessionCreationRateLimiter sessionCreationRateLimiter;
     private final PrivacyRedactor privacyRedactor;
     private final Clock clock;
 
@@ -247,14 +248,33 @@ public class UserMemoryUpdateWorker {
         AiUserMemoryUpdateRequest redactedRequest = new AiUserMemoryUpdateRequest(taskId, taskToken,
                 baseMemory.map(memory -> privacyRedactor.redactTree(memory).node()).orElse(null),
                 records.stream().map(this::toDailyTimeline).toList());
+        // 접수마다 AgentCore 세션이 새로 생기므로 TIMELINE과 같은 세션 생성 한도를 나눠 쓴다(#515). 허가는 task 저장
+        // 전에 받는다 — 허가 대기가 접수 시각에 섞이지 않고, 못 받으면 task 없이 날들이 큐에 남는다. guard는 TTL이 반납한다.
+        if (!acquireSessionPermit(records.size())) {
+            return new Outcome(Status.RATE_LIMITED, 0, missing.size());
+        }
         // 접수 시각은 여기서 찍는다 — 배치 진입 시각을 쓰면 밀린 시간까지 AI 소요로 집계된다.
         taskStore.save(taskId, new UserMemoryUpdateTask(subjectId,
                 records.stream().map(DailyRecord::getDailyRecordId).toList(),
                 TaskTokens.hash(taskToken), clock.instant(), UserMemoryDigest.of(baseMemory)), TASK_TTL);
 
-        dispatcher.dispatch(redactedRequest);
+        // throttle(용량 한도 거절)은 같은 token으로 잠시 뒤 다시 보낸다. 재시도를 다 쓰면 4xx 거절과 같이 처리된다.
+        sessionCreationRateLimiter.runWithThrottleRetry(() -> dispatcher.dispatch(redactedRequest));
         log.info("User Memory 갱신 접수 요청: days={} taskId={}", records.size(), taskId);
         return new Outcome(Status.ACCEPTED, records.size(), missing.size());
+    }
+
+    /** 세션 생성 허가를 받는다. 대기 초과와 limiter의 Redis 오류는 모두 "이번 실행에서 미룸"이다(task 미저장). */
+    private boolean acquireSessionPermit(int days) {
+        try {
+            if (sessionCreationRateLimiter.tryAcquire()) {
+                return true;
+            }
+            log.warn("User Memory 갱신 세션 생성 허가 대기 초과(다음 실행으로 미룸): days={}", days);
+        } catch (RuntimeException e) {
+            log.warn("User Memory 갱신 세션 생성 허가 확인 실패(다음 실행으로 미룸): days={} error={}", days, e.toString());
+        }
+        return false;
     }
 
     /**
@@ -327,6 +347,8 @@ public class UserMemoryUpdateWorker {
         /** 5xx·timeout·접수 계약 불일치 — AI가 받았을 수도 있다. 결과가 안 오면 다음 배치가 다시 보낸다. */
         UNKNOWN,
         /** 접수할 하루 기록이 하나도 없었다 — 해당 날들은 이미 큐에서 걷어냈다. */
-        NO_MATERIAL
+        NO_MATERIAL,
+        /** 세션 생성 허가를 받지 못했다(#515) — task를 저장하지 않았고 날들은 큐에 남아 다음 실행이 다시 보낸다. */
+        RATE_LIMITED
     }
 }

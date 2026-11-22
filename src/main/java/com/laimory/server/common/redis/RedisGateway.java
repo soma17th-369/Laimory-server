@@ -202,6 +202,27 @@ public class RedisGateway {
         return count;
     }
 
+    /**
+     * 정수 값을 1 올리고 결과를 반환한다(INCR). 결과가 1이면 이번 호출이 key를 만든 것이라 TTL을 건다(PEXPIRE).
+     *
+     * <p>key를 만든 뒤 TTL을 걸기 전에 프로세스가 죽거나 PEXPIRE가 실패하면 TTL 없는 key가 남는다. 그래서 key가 시간
+     * 창마다 새로 생기고 다시 쓰이지 않는 짧은 카운터(예: 초당 호출 수 제한)에만 쓴다 — 남더라도 정수 하나다.
+     * 먼저 {@code SET NX PX}로 만드는 방식보다 명령이 하나 적어, 한도에 걸려 재시도하는 동안의 명령 수가 절반이다.
+     */
+    public long incrementWithTtlOnCreate(String logicalKey, Duration ttl) {
+        Long value = template.opsForValue().increment(prefix + logicalKey);
+        if (value == null) {
+            // 파이프라인/트랜잭션 맥락에서만 null — 이 gateway는 그 맥락을 지원하지 않으므로 불변식 위반.
+            throw new IllegalStateException("Redis incr이 null을 반환했습니다: " + logicalKey);
+        }
+        mirror.increment(prefix + logicalKey);
+        if (value == 1L) {
+            template.expire(prefix + logicalKey, ttl);
+            mirror.expire(prefix + logicalKey, ttl);
+        }
+        return value;
+    }
+
     /** key에 TTL을 다시 걸고 성공 여부를 반환한다(PEXPIRE). key가 없으면 false다. */
     public boolean expire(String logicalKey, Duration ttl) {
         boolean applied = Boolean.TRUE.equals(template.expire(prefix + logicalKey, ttl));

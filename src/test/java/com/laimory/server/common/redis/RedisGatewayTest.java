@@ -87,6 +87,20 @@ class RedisGatewayTest {
     }
 
     @Test
+    void incrementWithTtlOnCreate_setsTtlOnlyWhenThisCallCreatedTheKey() {
+        when(template.opsForValue()).thenReturn(valueOps);
+        when(valueOps.increment("dev_rate:1")).thenReturn(1L);
+        when(valueOps.increment("dev_rate:2")).thenReturn(3L);
+        RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
+
+        assertThat(redis.incrementWithTtlOnCreate("rate:1", Duration.ofSeconds(2))).isEqualTo(1L);
+        assertThat(redis.incrementWithTtlOnCreate("rate:2", Duration.ofSeconds(2))).isEqualTo(3L);
+
+        verify(template).expire("dev_rate:1", Duration.ofSeconds(2));
+        verify(template, org.mockito.Mockito.never()).expire(eq("dev_rate:2"), any(Duration.class));
+    }
+
+    @Test
     void setIfPresentKeepingTtl_prefixesKey_andSendsXxKeepTtl() {
         runCallbacksWithMockConnection();
         RedisGateway redis = new RedisGateway(template, DISABLED_MIRROR, "dev_");
