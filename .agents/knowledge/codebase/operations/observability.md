@@ -16,6 +16,7 @@ Prometheus/Grafana/exporter/dashboard/alert를 바꿀 때 읽는다.
 - `.github/workflows/deploy.yml`, `.github/workflows/deploy-monitoring.yml`
 - `deploy/elk/*`
 - `deploy/monitoring/*`
+- `deploy/oci/alloy/*`, `deploy/oci/grafana-cloud/*` (OCI host 경보)
 - live ELK, monitoring과 WAS host 상태
 
 ## Current Request Tracing
@@ -351,8 +352,9 @@ GET/SCAN/EVAL/SLOWLOG와 mutation을 허용하지 않는다.
 
 Grafana는 `Laimory / Overview`, `JVM & Spring`, `Infrastructure`, `Logs` 네 dashboard를 file
 provisioning한다. Prometheus datasource UID는 `prometheus`, Elasticsearch UID는 `elasticsearch-dev`다.
-네 dashboard 모두 `environment` 변수로 dev·prod를 고른다(test는 제외). Redis는 dev·test·prod 공용 1대이고
-exporter 라벨이 `environment=dev`라 Redis 패널은 environment 셀렉터 없이 항상 같은 값을 보여준다. Overview 경보
+네 dashboard 모두 `environment` 변수로 dev·prod를 고른다(test는 제외). Redis 패널·`redis_up`은 dev·test 공용 Redis(prod dual write secondary 겸용) 1대만 보고
+exporter 라벨이 `environment=dev`라 environment 셀렉터 없이 항상 같은 값을 보여준다. prod primary인 Upstash는
+exporter가 없고 월 사용량 수집기(`laimory_upstash_*`)만 있다. Overview 경보
 목록은 선택한 environment의 alert instance만 보여주므로, `environment=dev`로 고정된 공용 자산(Redis·monitoring
 host·Elasticsearch) 경보는 dev를 골라야 보인다. prod를 고르면 MySQL backend(prod mysqld exporter 없음),
 public `/status`·TLS probe(target이 dev 도메인뿐), monitoring host 전용 CloudWatch/EBS 패널은 No data다.
@@ -427,6 +429,29 @@ release publish와 monitoring EC2 SSM 적용을 자동화하며, SSM 직전 `dev
 host 적용을 막는다. 명시적으로 선택한 `workflow_dispatch` release는 허용한다. credential은 host의
 root-only file에서만 읽는다. operational 보강은 기존 Prometheus `node` job/target을 바꾸지 않으므로
 rollback에서도 해당 target을 제거하지 않는다.
+
+## OCI prod 경보 (Grafana Cloud Free)
+
+AWS `deploy/monitoring` 스택은 OCI host(api·ai·nginx·mysql 단일 host)로 가는 경로가 없어 그 host를 보지 않는다.
+OCI는 별도 경로다: compose 서비스 `alloy`가 api actuator·ai `/health`·host node 지표·textfile(MySQL 복제·백업)을
+Grafana Cloud(Free) Prometheus로 remote_write하고, Grafana Cloud 경보가 같은 Discord 채널로 보낸다. 외부 시점은
+Synthetic Monitoring HTTP check(`api-laimory-readyz`, 서울 probe 1곳, 1분)가 `https://api.laimory.app/readyz`를 본다.
+
+- **과금 0이 불변식이다.** 결제 수단을 등록하지 않고, active series 10k·Synthetic 월 100k 실행 안에 설계로 묶는다.
+  Alloy의 keep 정규식이 경보 식에 쓰는 지표 이름만 내보내므로, 새 지표를 쓰는 규칙을 추가하면 keep에도 넣어야 한다
+  (넣지 않으면 그 규칙은 NoData). check·probe 수와 주기는 늘리지 않는다.
+- 규칙 원본은 `deploy/oci/grafana-cloud/alert-rules.json`·`notification.json`이다. Grafana Cloud는 file provisioning이
+  없어 관리자 Mac에서 `apply-alerting.py apply`가 provisioning HTTP API로 덮어쓴다(merge만으로 반영되지 않는다).
+  provisioning으로 넣은 규칙은 UI 편집이 잠기며, 그 provenance 권한은 Admin role에만 있어 적용용 service account는 Admin이다.
+- label은 `environment=prod`, `host=oci-prod`, `instance=oci-prod` 고정값뿐이다. AWS 규칙과 달리 환경 중립이 아니라
+  host 고정 selector를 쓴다. 규칙은 NoData를 두 가지로 나눈다 — 수집 자체가 끊기면 알려야 하는 가용성·복제·백업 계열은
+  NoData=Alerting, 저트래픽에서 최소 요청 수 gate로 비는 5xx·p95와 조건부 결과(Hikari 대기, TLS 30일 구간)는 NoData=OK.
+  그래서 NoData=Alerting 규칙의 식은 정상일 때도 값(0)을 돌려줘야 한다 — `(...) > 0` 필터로 정상 결과를 비우면 정상
+  상태가 곧 경보가 된다(복제 정지 식은 `(1 - min(running)) + (수집 나이 > bool 300)`).
+- 복제 기간 전용 규칙(복제 정지·지연)과 replica 수집 timer는 `laimory.app` 전환 때 함께 지운다. lifecycle 3종은 AWS WAS와
+  같은 prod DB를 세므로 전환 때 옮기고, ERROR 로그 경보는 OCI 로그 저장소가 생길 때 옮긴다.
+- secret(metrics write token, service account token, webhook)과 stack 주소·remote_write URL·username은 저장소에 두지 않는다.
+  metrics token은 host의 `0400 root` 파일이고 Alloy가 요청마다 읽으므로 같은 inode 덮어쓰기로 무중단 교체한다.
 
 ## Runbook: access log field 추가 롤아웃
 

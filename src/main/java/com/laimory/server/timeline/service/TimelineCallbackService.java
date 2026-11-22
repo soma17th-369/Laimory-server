@@ -11,7 +11,6 @@ import com.laimory.server.timeline.TaskStatus;
 import com.laimory.server.timeline.dto.DraftTaskCallbackRequest;
 import com.laimory.server.timeline.entity.TimelineDraftTask;
 import io.micrometer.core.instrument.Timer;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -32,6 +31,7 @@ import org.springframework.stereotype.Service;
  * <p>FAILED는 terminal 저장 전에 요청 시 차감한 크레딧을 환불한다(#565) — 환불은 기록이 {@code CHARGED}일 때만
  * 일어나므로 terminal 저장 실패 뒤의 재전송도 한 번만 환불한다. 환불이 실패하면 전파해(500) AI 재전송에 맡긴다.
  * terminal 저장 뒤 유실 타이머를 지운다(실패는 로그만 — 만료돼도 기록이 이미 환불돼 유실 처리는 건너뛴다).
+ * 실패 push는 저장한 실패 분류로 문구를 고른다 — 이벤트 0건({@code 1211} → {@code -1022})은 전용 문구다(#658).
  *
  * <p>FAILED는 환불 다음, terminal 저장 전에 record가 활성 Event 없는 DRAFT면 {@code ai_failed}로 soft delete한다(#593) —
  * 실패 push·폴링을 받는 시점에 그 날짜는 이미 없는 기록이어야 한다. 삭제가 실패하면 환불처럼 전파해(500) AI 재전송에
@@ -41,6 +41,9 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class TimelineCallbackService {
+
+    /** AI 코드 목록(Laimory-AI {@code app/core/error_codes.py})의 이벤트 0건 코드 — 결과 저장 없이 FAILED 콜백으로만 온다(#658). */
+    private static final int AI_NO_EVENTS_CODE = 1211;
 
     private final TimelineTaskService timelineTaskService;
     private final TimelineCompletionPushNotifier timelineCompletionPushNotifier;
@@ -103,7 +106,8 @@ public class TimelineCallbackService {
                 throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
             }
             cancelLossTimerQuietly(taskId);
-            enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.FAILED);
+            enqueuePushQuietly(taskId, TaskStatus.FAILED,
+                    () -> timelineCompletionPushNotifier.notifyFailedAsync(task.subjectId(), taskId, failureType));
             return;
         }
 
@@ -115,7 +119,8 @@ public class TimelineCallbackService {
             log.warn("success callback task expired before terminal write: taskId={}", taskId);
             throw new BusinessException(ExceptionType.DRAFT_TASK_NOT_FOUND);
         }
-        enqueuePushQuietly(taskId, task.subjectId(), TaskStatus.SUCCESS);
+        enqueuePushQuietly(taskId, TaskStatus.SUCCESS,
+                () -> timelineCompletionPushNotifier.notifyAsync(task.subjectId(), taskId, TaskStatus.SUCCESS));
     }
 
     private void cancelLossTimerQuietly(String taskId) {
@@ -127,19 +132,27 @@ public class TimelineCallbackService {
         }
     }
 
-    /** terminal 확정 뒤 완료 push를 비동기 best-effort로 예약한다. */
-    private void enqueuePushQuietly(String taskId, UUID subjectId, TaskStatus status) {
+    /** terminal 확정 뒤 완료 push를 비동기 best-effort로 예약한다. FAILED는 저장한 실패 분류로 문구를 고른다. */
+    private void enqueuePushQuietly(String taskId, TaskStatus status, Runnable enqueue) {
         try {
-            timelineCompletionPushNotifier.notifyAsync(subjectId, taskId, status);
+            enqueue.run();
         } catch (RuntimeException e) {
             log.warn("completion push enqueue failed (polling is fallback): taskId={} status={} detail={}",
                     taskId, status, e.getMessage());
         }
     }
 
-    /** 미지 실패 코드는 task를 PROCESSING에 가두지 않고 AI_REPORTED_FAILURE로 수렴한다. */
+    /**
+     * AI 실패 코드를 task 실패 분류로 해석한다 — 이벤트 0건({@value #AI_NO_EVENTS_CODE})만 {@code -1022}이고,
+     * 구 계약 {@code -1008}은 그대로, 그 밖의 AI 코드·null은 task를 PROCESSING에 가두지 않고 AI_REPORTED_FAILURE로 수렴한다.
+     */
     private ExceptionType resolveAiFailureCode(String taskId, DraftTaskCallbackRequest request) {
         Integer requested = request.errorCode();
+        if (requested != null && requested == AI_NO_EVENTS_CODE) {
+            // 장애가 아니라 그날 기록의 결과라 WARN 노이즈를 만들지 않는다.
+            log.info("ai reported failure: taskId={} code={}", taskId, ExceptionType.AI_REPORTED_NO_EVENTS.code());
+            return ExceptionType.AI_REPORTED_NO_EVENTS;
+        }
         boolean known = requested != null && requested == ExceptionType.AI_REPORTED_FAILURE.code();
         if (requested != null && !known) {
             log.warn("unknown ai failure code, falling back: taskId={} requested={}", taskId, requested);

@@ -1,0 +1,286 @@
+{
+  "folder": {
+    "uid": "laimory-oci",
+    "title": "Laimory OCI"
+  },
+  "interval_seconds": 60,
+  "groups": [
+    {
+      "name": "laimory-oci-mysql",
+      "rules": [
+        {
+          "uid": "laimory_oci_replica_stopped",
+          "title": "OCI MySQL replica stopped",
+          "expr": "(1 - min by (environment, host) (laimory_oci_mysql_replica_running{environment=\"prod\",host=\"oci-prod\"})) + ((time() - max by (environment, host) (laimory_oci_mysql_replica_last_collect_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"})) > bool 300)",
+          "op": "gt",
+          "threshold": 0,
+          "for": "5m",
+          "noDataState": "Alerting",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical"
+          },
+          "summary": "OCI MySQL replica IO or SQL thread is not running, or the replica status collector has stopped.",
+          "description": "Run SHOW REPLICA STATUS in the OCI mysql container (Last_IO_Error, Last_SQL_Error) and check laimory-oci-mysql-replica-status.timer. A disconnected IO thread retries on its own; this fires only after 5 minutes.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#mysql-replica"
+        },
+        {
+          "uid": "laimory_oci_replica_lag",
+          "title": "OCI MySQL replica lag high",
+          "expr": "max by (environment, host) (laimory_oci_mysql_replica_seconds_behind{environment=\"prod\",host=\"oci-prod\"})",
+          "op": "gt",
+          "threshold": 300,
+          "for": "10m",
+          "noDataState": "Alerting",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "OCI MySQL replica is more than 5 minutes behind prod.",
+          "description": "Check the Tailscale path to prod MySQL and the replica SQL thread. -1 (unknown) does not trigger this rule; a stopped thread is covered by the replica stopped rule.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#mysql-replica"
+        },
+        {
+          "uid": "laimory_oci_mysqldump_stale",
+          "title": "OCI MySQL dump backup stale",
+          "expr": "time() - max by (environment, host) (laimory_oci_mysqldump_last_success_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"})",
+          "op": "gt",
+          "threshold": 93600,
+          "for": "5m",
+          "noDataState": "Alerting",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical"
+          },
+          "summary": "OCI MySQL logical dump has not succeeded in over 26 hours.",
+          "description": "Inspect laimory-oci-mysqldump-backup.service logs, the R2 token, and the backup account on the OCI host.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#mysql-backup"
+        },
+        {
+          "uid": "laimory_oci_binlog_upload_stale",
+          "title": "OCI MySQL binlog upload stale",
+          "expr": "time() - max by (environment, host) (laimory_oci_binlog_upload_last_success_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"})",
+          "op": "gt",
+          "threshold": 600,
+          "for": "5m",
+          "noDataState": "Alerting",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical"
+          },
+          "summary": "OCI MySQL binlog upload to R2 has not succeeded in over 10 minutes.",
+          "description": "The off-host copy is falling behind. Inspect laimory-oci-binlog-upload.service logs and the R2 token on the OCI host.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#mysql-backup"
+        }
+      ]
+    },
+    {
+      "name": "laimory-oci-availability",
+      "rules": [
+        {
+          "uid": "laimory_oci_api_down",
+          "title": "OCI API down",
+          "expr": "max by (environment, host) (up{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\"})",
+          "op": "lt",
+          "threshold": 1,
+          "for": "2m",
+          "noDataState": "Alerting",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical"
+          },
+          "summary": "Alloy cannot scrape the OCI api container (api:9090).",
+          "description": "Check docker compose ps api and the api logs on the OCI host. No data (Alloy or the host is down) also fires this rule.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#availability"
+        },
+        {
+          "uid": "laimory_oci_ai_health_failed",
+          "title": "OCI AI health check failed",
+          "expr": "max by (environment, host) (probe_success{job=\"ai_health\",environment=\"prod\",host=\"oci-prod\"})",
+          "op": "lt",
+          "threshold": 1,
+          "for": "2m",
+          "noDataState": "Alerting",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical"
+          },
+          "summary": "The OCI ai container does not answer /health.",
+          "description": "Check docker compose ps ai and the ai logs on the OCI host. Timeline generation fails while this fires.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#availability"
+        },
+        {
+          "uid": "laimory_api_https_probe_failed",
+          "title": "api.laimory.app HTTPS probe failed",
+          "expr": "min by (job) (probe_success{job=\"api-laimory-readyz\"})",
+          "op": "lt",
+          "threshold": 1,
+          "for": "2m",
+          "noDataState": "Alerting",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical"
+          },
+          "summary": "Synthetic Monitoring cannot get a healthy /readyz from https://api.laimory.app (Seoul probe).",
+          "description": "readyz includes the database and Redis. Check nginx, the certificate, DNS, and the api readiness on the OCI host.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#availability"
+        },
+        {
+          "uid": "laimory_api_tls_expiry_30d",
+          "title": "api.laimory.app TLS certificate expires within 30 days",
+          "expr": "(min by (job) (probe_ssl_earliest_cert_expiry{job=\"api-laimory-readyz\"}) - time()) and (min by (job) (probe_ssl_earliest_cert_expiry{job=\"api-laimory-readyz\"}) - time() >= 1209600)",
+          "op": "lt",
+          "threshold": 2592000,
+          "for": "10m",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "The api.laimory.app certificate expires within 30 days.",
+          "description": "Certbot renews twice a day on the OCI host (laimory-cert-renew.timer). Check its logs and the nginx-certs copy hook.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#tls"
+        },
+        {
+          "uid": "laimory_api_tls_expiry_14d",
+          "title": "api.laimory.app TLS certificate expires within 14 days",
+          "expr": "min by (job) (probe_ssl_earliest_cert_expiry{job=\"api-laimory-readyz\"}) - time()",
+          "op": "lt",
+          "threshold": 1209600,
+          "for": "10m",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical"
+          },
+          "summary": "The api.laimory.app certificate expires within 14 days.",
+          "description": "Renewal has been failing for weeks. Run the certbot renewal on the OCI host and reload nginx.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#tls"
+        }
+      ]
+    },
+    {
+      "name": "laimory-oci-application",
+      "rules": [
+        {
+          "uid": "laimory_oci_http_5xx_ratio",
+          "title": "OCI API HTTP 5xx ratio high",
+          "expr": "(sum by (environment, host) (increase(http_server_requests_seconds_count{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\",uri!~\"/actuator.*|/readyz|/status\",status=~\"5..\"}[5m])) / clamp_min(sum by (environment, host) (increase(http_server_requests_seconds_count{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\",uri!~\"/actuator.*|/readyz|/status\"}[5m])), 1)) and on (environment, host) (sum by (environment, host) (increase(http_server_requests_seconds_count{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\",uri!~\"/actuator.*|/readyz|/status\"}[5m])) >= 20)",
+          "op": "gt",
+          "threshold": 0.05,
+          "for": "0s",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical"
+          },
+          "summary": "More than 5% of OCI API requests returned 5xx over 5 minutes (at least 20 requests).",
+          "description": "Inspect the api logs on the OCI host for the failing paths and exception types.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#application"
+        },
+        {
+          "uid": "laimory_oci_http_p95_latency",
+          "title": "OCI API HTTP p95 latency high",
+          "expr": "(histogram_quantile(0.95, sum by (le, environment, host) (rate(http_server_requests_seconds_bucket{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\",uri!~\"/actuator.*|/readyz|/status\"}[5m])))) and on (environment, host) (sum by (environment, host) (increase(http_server_requests_seconds_count{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\",uri!~\"/actuator.*|/readyz|/status\"}[5m])) >= 20)",
+          "op": "gt",
+          "threshold": 1,
+          "for": "10m",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "OCI API p95 latency has been above 1 second for 10 minutes.",
+          "description": "Check database latency on the Tailscale path, Hikari pool usage, and host CPU on the OCI host.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#application"
+        },
+        {
+          "uid": "laimory_oci_jvm_heap_pressure",
+          "title": "OCI API JVM heap pressure",
+          "expr": "sum by (environment, host) (jvm_memory_used_bytes{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\",area=\"heap\"}) / clamp_min(sum by (environment, host) (jvm_memory_max_bytes{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\",area=\"heap\"} > 0), 1)",
+          "op": "gt",
+          "threshold": 0.85,
+          "for": "10m",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "OCI API heap usage has been above 85% for 10 minutes.",
+          "description": "Look for GC pressure in the api logs. The heap ceiling is the JVM default (25% of host memory) unless -Xmx is set.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#application"
+        },
+        {
+          "uid": "laimory_oci_hikari_pressure",
+          "title": "OCI API Hikari connection pool pressure",
+          "expr": "(max by (environment, host) (hikaricp_connections_active{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\"}) / clamp_min(max by (environment, host) (hikaricp_connections_max{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\"}), 1)) and on (environment, host) (max by (environment, host) (hikaricp_connections_pending{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\"}) > 0)",
+          "op": "gt",
+          "threshold": 0.9,
+          "for": "5m",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "OCI API Hikari pool is over 90% used with waiting threads for 5 minutes.",
+          "description": "Check slow queries and the database round trip time from the OCI host.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#application"
+        }
+      ]
+    },
+    {
+      "name": "laimory-oci-host",
+      "rules": [
+        {
+          "uid": "laimory_oci_host_memory_low",
+          "title": "OCI host memory low",
+          "expr": "max by (environment, host) (node_memory_MemAvailable_bytes{job=\"node\",environment=\"prod\",host=\"oci-prod\"}) / max by (environment, host) (node_memory_MemTotal_bytes{job=\"node\",environment=\"prod\",host=\"oci-prod\"})",
+          "op": "lt",
+          "threshold": 0.15,
+          "for": "10m",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "OCI host available memory has been below 15% for 10 minutes.",
+          "description": "The host has no swap. Check docker stats for api, ai, mysql, nginx, and alloy.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#host"
+        },
+        {
+          "uid": "laimory_oci_filesystem_low",
+          "title": "OCI host filesystem space low",
+          "expr": "max by (environment, host, mountpoint) (node_filesystem_avail_bytes{job=\"node\",environment=\"prod\",host=\"oci-prod\"}) / max by (environment, host, mountpoint) (node_filesystem_size_bytes{job=\"node\",environment=\"prod\",host=\"oci-prod\"})",
+          "op": "lt",
+          "threshold": 0.2,
+          "for": "5m",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "An OCI host filesystem has less than 20% free space.",
+          "description": "Check MySQL datadir and binlog size, Docker images, and logs on the OCI host.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#host"
+        },
+        {
+          "uid": "laimory_oci_oom_kill",
+          "title": "OCI host OOM kill detected",
+          "expr": "sum by (environment, host) (increase(node_vmstat_oom_kill{job=\"node\",environment=\"prod\",host=\"oci-prod\"}[10m]))",
+          "op": "gt",
+          "threshold": 0,
+          "for": "0s",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical",
+            "notify_once": "true"
+          },
+          "summary": "The kernel OOM killer terminated a process on the OCI host.",
+          "description": "Find the killed process in the kernel log (journalctl -k) and check which container restarted.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#host"
+        }
+      ]
+    }
+  ]
+}

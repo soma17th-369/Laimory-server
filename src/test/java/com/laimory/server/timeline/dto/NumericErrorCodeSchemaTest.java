@@ -23,7 +23,7 @@ class NumericErrorCodeSchemaTest {
         assertThat(pollingError.getExample()).isEqualTo(-1009);
         Schema<?> callbackError = callback.getProperties().get("errorCode");
         assertInteger(callbackError);
-        assertThat(callbackError.getExample()).isEqualTo(-1008);
+        assertThat(callbackError.getExample()).isEqualTo(1211);
     }
 
     private void assertInteger(Schema<?> schema) {

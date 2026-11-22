@@ -26,7 +26,7 @@ Laimory 서버의 구조, 런타임 흐름, 외부·내부 계약, 저장소와 
 | [Testing](operations/testing.md) | 검증 범위·CI·integration test가 필요할 때 | Gradle tasks, test tags, CI | test task·tag·CI 범위가 바뀔 때 | build/tests/workflow | 해당 Gradle task |
 | [Environments](operations/environments.md) | local/dev/prod 차이와 환경변수를 다룰 때 | properties, workflow, live configuration | profile·mode·주입 방식이 바뀔 때 | config/workflow/live state | context boot·config search |
 | [Deployment](operations/deployment.md) | 배포·preflight·복구를 바꿀 때 | deploy workflow, Dockerfile, live host | rollout·health·rollback·운영 절차가 바뀔 때 | workflow/live state | build/image/workflow validation |
-| [Observability](operations/observability.md) | log·transaction ID·ELK·민감정보를 다룰 때 | logging code/config, ELK config | 추적 계약·로그 pipeline이 바뀔 때 | filter/logback/deploy config | logging tests·JSON validation |
+| [Observability](operations/observability.md) | log·transaction ID·ELK·민감정보·경보를 다룰 때 | logging code/config, ELK config, `deploy/monitoring`, `deploy/oci/alloy`·`deploy/oci/grafana-cloud` | 추적 계약·로그 pipeline이 바뀔 때 | filter/logback/deploy config | logging tests·JSON validation |
 
 ## Maintenance
 

@@ -122,6 +122,17 @@ class TimelineDraftTaskPollingServiceTest {
     }
 
     @Test
+    void poll_failed_noEventsCode_isReturnedAsIs() {
+        // 이벤트 0건(-1022, #658)은 허용된 실패 분류라 -1011로 대체하지 않고 그대로 내보낸다.
+        when(timelineTaskService.find("t"))
+                .thenReturn(Optional.of(TimelineDraftTask.failed(SUBJECT_ID, 42L, -1022, tokenHashes("h"))));
+
+        DraftTaskStatusResponse res = service.poll("v1", SUBJECT_ID, "t");
+
+        assertThat(res.error()).isEqualTo(-1022);
+    }
+
+    @Test
     void poll_failed_unknownNumericError_isReplacedNotLeaked() {
         // 오염되거나 미지인 numeric code는 그대로 내보내지 않고 -1011로 대체한다(read-side 유출 방어).
         when(timelineTaskService.find("t"))

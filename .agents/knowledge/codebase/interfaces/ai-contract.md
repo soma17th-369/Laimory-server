@@ -288,7 +288,10 @@ Task-Token: <taskToken>
 - terminal task의 같은 callback 재전송은 200, 상충 결과는 409 `-1017`이다.
 - terminal write(`SET XX PX 24h`)에 성공한 요청만 완료 push를 예약한다 — write 시점 만료(`XX=false`)는
   404이고 index 제거·push를 실행하지 않는다.
-- FAILED `errorCode`는 음수 JSON integer이며 미지 값은 `-1008`로 수렴한다. 자유 text `error`는 사용자
+- FAILED `errorCode`는 AI 자체 실패 코드(양수 JSON integer — Laimory-AI `app/core/error_codes.py`)다. 서버는
+  이벤트 0건 `1211`만 FAILED `-1022`로 저장하고(#658 — AI는 0건이면 결과 저장 없이 이 FAILED 콜백만 보낸다),
+  구 계약 `-1008`은 그대로 받으며, 그 밖의 값·null은 `-1008`로 수렴한다. 실패 완료 push는 저장한 실패 분류로
+  문구를 고른다(0건 전용 문구). 자유 text `error`는 사용자
   원문이 섞일 수 있어 저장·클라이언트 노출은 물론 서버 로그에도 남기지 않는다(수신 후 폐기 — 서버는
   taskId와 bounded numeric code만 로깅하고, wire 계약 유지를 위해 필드만 유지한다).
 
