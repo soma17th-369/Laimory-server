@@ -10,10 +10,12 @@ import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
- * 요청 스레드에서 바로 AI에 접수하는 경로(#515 이전 동작 그대로).
+ * 요청 스레드에서 바로 AI에 접수하는 경로({@code app.ai.dispatch.timeline.route=inline}, 기본 — #515 이전 동작 그대로).
+ * 대기열 경로를 끄면 이 경로로 돌아오므로 롤백 경로이기도 하다.
  *
  * <p>순서: 유실 타이머(처리 기한) → PROCESSING({@code INPUT_PENDING} + token hash) 저장 → 동기 접수(ack까지).
  * 미접수 확정(4xx 거절, throttle 포함)만 502로 실패시키고, 접수 확인과 UNKNOWN은 둘 다 PROCESSING이 살아 있으므로
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Service;
  */
 @Slf4j
 @Service
+@ConditionalOnProperty(name = "app.ai.dispatch.timeline.route", havingValue = "inline", matchIfMissing = true)
 @RequiredArgsConstructor
 public class InlineTimelineDispatchSubmitter implements TimelineDispatchSubmitter {
 

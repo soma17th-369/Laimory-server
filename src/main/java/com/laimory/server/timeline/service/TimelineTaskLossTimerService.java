@@ -29,6 +29,11 @@ public class TimelineTaskLossTimerService {
         timelineTaskLossTimerStore.start(taskId, TIMER_TTL);
     }
 
+    /** 접수 대기열 경로(#515)의 타이머 — 처리 기한에 접수 대기 예산을 더한 {@link TimelineTaskService#QUEUED_PROCESSING_DEADLINE}. */
+    public void startForQueuedDispatch(String taskId) {
+        timelineTaskLossTimerStore.start(taskId, TimelineTaskService.QUEUED_PROCESSING_DEADLINE);
+    }
+
     public void cancel(String taskId) {
         timelineTaskLossTimerStore.cancel(taskId);
     }

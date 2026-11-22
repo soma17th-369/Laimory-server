@@ -5,8 +5,13 @@ import com.laimory.server.timeline.entity.TimelineDraftTask;
 import java.util.UUID;
 
 /**
- * draft 생성이 AI 접수를 맡기는 접수 경로(#515). 지금 구현은 요청 스레드에서 바로 접수하는
- * {@link InlineTimelineDispatchSubmitter}(#515 이전 동작)뿐이다.
+ * draft 생성이 AI 접수를 맡기는 접수 경로(#515). 선택은 {@code app.ai.dispatch.timeline.route}다.
+ *
+ * <ul>
+ *   <li>{@code inline}(기본, {@link InlineTimelineDispatchSubmitter}): 요청 스레드에서 바로 접수한다(#515 이전 동작).</li>
+ *   <li>{@code queue}({@link QueuedTimelineDispatchSubmitter}): 접수 대기열(SQS)에 적재하고 worker가 세션 생성률 한도
+ *       안에서 접수한다.</li>
+ * </ul>
  *
  * <p>누구에게 보내는지({@code app.ai.mode} — noop·fake·http·agentcore)는 {@link TimelineAiDispatcher}가 정하며 이 경로
  * 선택과 독립이다.

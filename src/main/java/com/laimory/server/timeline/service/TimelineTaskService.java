@@ -49,6 +49,19 @@ public class TimelineTaskService {
     // 정리하고 FAILED로 종결할 수 있다(#593). 그 처리마저 없으면(알림 유실) 이 TTL이 회수한다.
     public static final Duration PROCESSING_TTL = Duration.ofMinutes(5);
 
+    /**
+     * 접수 대기 예산(#515). 접수 대기열(route=queue)에 적재한 task가 worker의 AI 접수를 기다릴 수 있는 상한이다 —
+     * 넘기면 worker가 접수하지 않고 미접수 확정으로 종결한다. 큐 경로의 처리 기한·task 수명은 이만큼 늘려 이 예산 안에
+     * 접수된 task가 inline 경로와 같은 AI 처리 시간을 확보하게 한다. inline 경로의 기한·수명은 바꾸지 않는다.
+     */
+    public static final Duration DISPATCH_QUEUE_WAIT_BUDGET = Duration.ofSeconds(60);
+
+    /** 큐 경로의 처리 기한(유실 타이머 TTL) = 접수 대기 예산 + {@link #PROCESSING_DEADLINE}. */
+    public static final Duration QUEUED_PROCESSING_DEADLINE = DISPATCH_QUEUE_WAIT_BUDGET.plus(PROCESSING_DEADLINE);
+
+    /** 큐 경로의 PROCESSING task key 수명 = 접수 대기 예산 + {@link #PROCESSING_TTL}. */
+    static final Duration QUEUED_PROCESSING_TTL = DISPATCH_QUEUE_WAIT_BUDGET.plus(PROCESSING_TTL);
+
     private static final Duration TERMINAL_TTL = Duration.ofHours(24);
 
     private final TimelineTaskStore timelineTaskStore;
@@ -66,6 +79,20 @@ public class TimelineTaskService {
                 TimelineDraftTask.processing(subjectId, dailyRecordId, timelineWindow,
                         tokenHash, processingStartedAt),
                 PROCESSING_TTL);
+        timelineMetrics.recordDraftCreated();
+    }
+
+    /**
+     * 접수 대기열에 적재할 PROCESSING task({@code DISPATCH_PENDING})를 저장한다(#515). 수명은 큐 경로 값
+     * ({@link #QUEUED_PROCESSING_TTL})이고, worker의 접수 전이({@link #saveProcessingIfPresent})가 이 만료 시각을 보존한다.
+     */
+    public void createDispatchPending(String taskId, UUID subjectId, long dailyRecordId,
+                                      TimelineDraftTask.TimelineWindow timelineWindow,
+                                      String placeholderTokenHash, Instant processingStartedAt) {
+        timelineTaskStore.save(taskId,
+                TimelineDraftTask.dispatchPending(subjectId, dailyRecordId, timelineWindow,
+                        placeholderTokenHash, processingStartedAt),
+                QUEUED_PROCESSING_TTL);
         timelineMetrics.recordDraftCreated();
     }
 
