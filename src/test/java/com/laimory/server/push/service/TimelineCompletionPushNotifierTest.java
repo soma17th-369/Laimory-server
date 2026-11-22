@@ -14,6 +14,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.PushMessage;
 import com.laimory.server.push.PushMessageSender;
 import com.laimory.server.push.PushMessageType;
@@ -99,6 +100,22 @@ class TimelineCompletionPushNotifierTest {
                     "timeline completion push result: taskId=t-1 taskStatus=SUCCESS "
                             + "targets=2 accepted=2 failed=0 invalidTargets=0");
         });
+    }
+
+    @Test
+    void notifyFailedAsync_sendsMessageChosenByFailureType() {
+        PushMessage noEvents = PushMessage.timelineFailure(TASK_ID, ExceptionType.AI_REPORTED_NO_EVENTS);
+        when(pushRegistrationService.findFirebaseInstallationIds(SUBJECT_ID)).thenReturn(List.of("fid-1"));
+        when(pushMessageSender.send(noEvents, List.of("fid-1"))).thenReturn(new PushSendResult(1, 1, 0, List.of()));
+
+        notifier().notifyFailedAsync(SUBJECT_ID, TASK_ID, ExceptionType.AI_REPORTED_NO_EVENTS);
+
+        verify(pushMessageSender).send(noEvents, List.of("fid-1"));
+        verify(pushMetrics).record(PushMessageType.TIMELINE_COMPLETION_NO_EVENTS,
+                new PushSendResult(1, 1, 0, List.of()));
+        assertThat(logAppender.list).extracting(ILoggingEvent::getFormattedMessage).containsExactly(
+                "timeline completion push result: taskId=t-1 taskStatus=FAILED "
+                        + "targets=1 accepted=1 failed=0 invalidTargets=0");
     }
 
     @Test

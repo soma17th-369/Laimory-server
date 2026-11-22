@@ -1,5 +1,6 @@
 package com.laimory.server.push;
 
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.timeline.TaskStatus;
 import java.time.LocalDate;
 import java.util.Map;
@@ -27,7 +28,21 @@ public record PushMessage(PushMessageType type, PushCopy copy, Map<String, Strin
      * 상태를 data로 싣는다. 비terminal 상태는 발송 대상이 아니므로 여기서 거절한다.
      */
     public static PushMessage timelineCompletion(String taskId, TaskStatus status) {
-        PushMessageType type = completionType(status);
+        return completion(taskId, status, completionType(status));
+    }
+
+    /**
+     * 실패 분류를 아는 타임라인 실패 통지 — 이벤트 0건({@link ExceptionType#AI_REPORTED_NO_EVENTS})은 전용 종류,
+     * 그 외 분류는 일반 실패 종류다. data는 일반 완료 통지와 같다({@code status=FAILED}).
+     */
+    public static PushMessage timelineFailure(String taskId, ExceptionType failureType) {
+        PushMessageType type = failureType == ExceptionType.AI_REPORTED_NO_EVENTS
+                ? PushMessageType.TIMELINE_COMPLETION_NO_EVENTS
+                : PushMessageType.TIMELINE_COMPLETION_FAILED;
+        return completion(taskId, TaskStatus.FAILED, type);
+    }
+
+    private static PushMessage completion(String taskId, TaskStatus status, PushMessageType type) {
         return new PushMessage(type, type.copies().getFirst(),
                 Map.of("taskId", taskId, "status", status.name()));
     }

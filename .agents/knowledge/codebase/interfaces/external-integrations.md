@@ -191,7 +191,8 @@ CDN 열람은 위 OAC 정책이 bucket 전체 범위라는 전제에 기댄다. 
   후보는 `PushMessageType`이 코드로 소유하고 호출자가 문구를 만들지 않는다. 일일 리마인더는 여러 문구를
   발송 날짜(`Asia/Seoul`)의 `epochDay % 문구 수`로 선언 순서대로 돌린다(#609) — 같은 날은 전원·전 process가
   같은 문구를 받고 이틀 연속 같은 문구는 없다. 결과에 따라 문구가 달라지면 종류를 나누고
-  (`TIMELINE_COMPLETION_SUCCESS`/`_FAILED`), 나뉜 종류는 같은 `metricGroup()`을 공유해 발송 metric의
+  (`TIMELINE_COMPLETION_SUCCESS`/`_FAILED`/`_NO_EVENTS` — 실패는 task에 저장한 실패 분류로 고르며 이벤트 0건
+  `-1022`만 `_NO_EVENTS`, #658), 나뉜 종류는 같은 `metricGroup()`을 공유해 발송 metric의
   `type` 차원이 늘지 않는다. 현재 모든 종류가 정보성 통지다 — 일일 리마인더는 기본 ON 일괄 발송이고
   수신거부 수단은 일일 알림 OFF다(#318). 광고성 알림을
   추가하려면 수신 동의·야간 제한·`(광고)` 표기·무료 수신거부 수단을 함께 도입해야 한다.

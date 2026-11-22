@@ -78,6 +78,10 @@ class TimelineCallbackServiceTest {
         return new DraftTaskCallbackRequest(TaskStatus.FAILED, -1008, "inference failed");
     }
 
+    private static DraftTaskCallbackRequest failedNoEvents() {
+        return new DraftTaskCallbackRequest(TaskStatus.FAILED, 1211, "no events");
+    }
+
     @Test
     void successAtCallbackPending_marksTerminalAndPushes() {
         TimelineDraftTask task = taskAt(ProcessStage.CALLBACK_PENDING);
@@ -113,7 +117,37 @@ class TimelineCallbackServiceTest {
 
         verify(timelineTaskService).markFailedIfPresent(
                 TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
-        verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
+        verify(timelineCompletionPushNotifier).notifyFailedAsync(
+                SUBJECT_ID, TASK_ID, ExceptionType.AI_REPORTED_FAILURE);
+    }
+
+    @Test
+    void noEventsCallback_closesTaskWithNoEventsFailureAndNoEventsPush() {
+        // AI는 이벤트 0건을 결과 저장 없이 FAILED 1211로만 알린다 — 일반 실패(-1008)와 구분해 종결·통지한다(#658).
+        TimelineDraftTask task = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        when(timelineTaskService.markFailedIfPresent(
+                TASK_ID, task, ExceptionType.AI_REPORTED_NO_EVENTS)).thenReturn(true);
+
+        service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failedNoEvents());
+
+        verify(timelineTaskService).markFailedIfPresent(TASK_ID, task, ExceptionType.AI_REPORTED_NO_EVENTS);
+        verify(timelineCompletionPushNotifier).notifyFailedAsync(
+                SUBJECT_ID, TASK_ID, ExceptionType.AI_REPORTED_NO_EVENTS);
+    }
+
+    @Test
+    void noEventsCallback_stillRefundsAndDeletesEmptyDraft() {
+        // 0건도 사용자는 결과를 받지 못했다 — 일반 실패와 같이 환불하고 빈 DRAFT를 지운다.
+        TimelineDraftTask task = taskAt(ProcessStage.RESULT_PENDING);
+        when(timelineTaskService.find(TASK_ID)).thenReturn(Optional.of(task));
+        when(timelineTaskService.markFailedIfPresent(
+                TASK_ID, task, ExceptionType.AI_REPORTED_NO_EVENTS)).thenReturn(true);
+
+        service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failedNoEvents());
+
+        verify(creditService).refund(CreditCostType.TIMELINE_CREATION, TASK_ID, CreditRefundReason.AI_FAILED);
+        verify(dailyRecordService).softDeleteFailedDraft(RECORD_ID);
     }
 
     @Test
@@ -147,7 +181,8 @@ class TimelineCallbackServiceTest {
         order.verify(creditService).refund(CreditCostType.TIMELINE_CREATION, TASK_ID, CreditRefundReason.AI_FAILED);
         order.verify(dailyRecordService).softDeleteFailedDraft(RECORD_ID);
         order.verify(timelineTaskService).markFailedIfPresent(TASK_ID, task, ExceptionType.AI_REPORTED_FAILURE);
-        order.verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
+        order.verify(timelineCompletionPushNotifier).notifyFailedAsync(
+                SUBJECT_ID, TASK_ID, ExceptionType.AI_REPORTED_FAILURE);
     }
 
     @Test
@@ -292,7 +327,8 @@ class TimelineCallbackServiceTest {
 
         service.handleCallback(VERSION, TASK_ID, TASK_TOKEN, failed());
 
-        verify(timelineCompletionPushNotifier).notifyAsync(SUBJECT_ID, TASK_ID, TaskStatus.FAILED);
+        verify(timelineCompletionPushNotifier).notifyFailedAsync(
+                SUBJECT_ID, TASK_ID, ExceptionType.AI_REPORTED_FAILURE);
     }
 
     @Test

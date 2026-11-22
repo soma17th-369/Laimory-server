@@ -112,7 +112,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 | 작성 작업 | Draft Task | 현재 구현 | DRAFT daily record를 비동기로 만드는 작업 resource다. POST가 즉시 반환하고 상태는 Redis에 둔다. |
 | 작업 ID | Task ID | 현재 구현 | UUIDv7 작업 식별자다. polling URL과 callback path에 사용한다. |
 | 작업 상태 | Task Status | 현재 구현 | `PROCESSING`, `SUCCESS`, `FAILED` 중 하나다. |
-| AI 작성 콜백 | AI Draft Callback | 현재 구현 | 결과 저장을 마친 뒤(또는 실패했을 때) 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 `errorCode`는 음수 JSON integer다. 서버는 Redis terminal 저장(native `SET XX PX 24h`)과 완료 푸시만 한다. SUCCESS는 `CALLBACK_PENDING`, FAILED는 결과 저장 전 stage에서만 받되 결과 선점(`claimedAt`) 중에는 `-1017`로 거절하며, 같은 terminal 재전송은 200·상충은 `-1017`, write 시점 만료는 `-1001`이다. |
+| AI 작성 콜백 | AI Draft Callback | 현재 구현 | 결과 저장을 마친 뒤(또는 실패했을 때) 보내는 status-only 알림이다. body는 `{status,errorCode,error}`이고 `errorCode`는 AI 자체 실패 코드(양수 JSON integer)다 — 이벤트 0건 `1211`만 FAILED `-1022`, 그 밖은 `-1008`로 저장한다(#658). 서버는 Redis terminal 저장(native `SET XX PX 24h`)과 완료 푸시만 한다. SUCCESS는 `CALLBACK_PENDING`, FAILED는 결과 저장 전 stage에서만 받되 결과 선점(`claimedAt`) 중에는 `-1017`로 거절하며, 같은 terminal 재전송은 200·상충은 `-1017`, write 시점 만료는 `-1001`이다. |
 | 작업 토큰 | Task Token | 현재 구현 | 서버간 각 단계가 현재 요청을 인증하는 opaque 256-bit bearer token이다. dispatch가 최초 token을 전달하고 입력·결과 성공 응답이 다음 token을 body로 반환한다. 원문은 저장·로그하지 않고 Redis task에 현재 SHA-256 hash만 보존해 매 요청 검증한다. |
 | 처리 단계 | Process Stage | 현재 구현 | PROCESSING task의 서버간 처리 순서를 제한하는 Redis 내부 상태다. `INPUT_PENDING → RESULT_PENDING → CALLBACK_PENDING`이며 외부 polling status에는 노출하지 않는다. token hash와 함께 native `SET XX KEEPTTL` write로 전이한다 — 최초 PROCESSING 만료 시각을 보존하고 만료 task를 부활시키지 않는다. |
 | 타임라인 윈도우 | Timeline Window | 현재 구현 | 클라이언트가 draft 요청에 지정한 AI 이벤트 생성 범위(`timelineWindow.startTime/endTime`)다. 서버는 필수값과 `startTime < endTime`만 검증하고, Redis에는 local 원본을 보존하며 AI 입력 조회 응답에서 record timezone 기반 offset ISO(`window.startAt/endAt`)로 변환해 내보낸다. 기록 날짜·기록 시각과 독립이며 상호 정합성은 검증하지 않는다. |
@@ -212,7 +212,7 @@ Laimory의 도메인 용어와 사용 금지 표현의 단일 기준이다.
 |---|---|---|---|
 | 푸시 등록 | Push Registration | 현재 구현 | subject 하나의 활성 앱 설치(FID) 하나를 나타내는 `push_registrations` 행이다. `subject_id`가 owner authority이고 FID 하나는 한 시점 단일 owner다(계정 전환 시 현재 인증 subject로 원자 재결합). callback은 draft task의 subject로 현재 FID를 조회한다. |
 | Firebase 설치 ID | Firebase Installation ID (FID) | 현재 구현 | FCM 발송 target인 대소문자 구분 opaque 식별자다(Admin SDK 9.10.0에서 deprecated registration token을 대체). 서버는 trim·형식 재작성 없이 저장·비교하고, 원문을 URL·로그·예외 메시지에 남기지 않는다(body 수신 + access log 마스킹). |
-| 타임라인 완료 푸시 | Timeline Completion Push | 현재 구현 | callback이 처음 확정한 terminal(`SUCCESS`/`FAILED`) 뒤 비동기 best-effort로 보내는 완료 신호다. 일반 문구 notification + data(`taskId`,`status`)뿐이며 결과의 권위 원천이 아니다 — 앱은 push를 받으면 polling API로 결과를 조회한다. Source Item의 알림 페이로드(`NotificationPayload`)와는 무관한 별개 개념이다. |
+| 타임라인 완료 푸시 | Timeline Completion Push | 현재 구현 | callback이 처음 확정한 terminal(`SUCCESS`/`FAILED`) 뒤 비동기 best-effort로 보내는 완료 신호다. 일반 문구 notification + data(`taskId`,`status`)뿐이며(FAILED 문구는 저장한 실패 분류로 고른다 — 이벤트 0건 전용, #658) 결과의 권위 원천이 아니다 — 앱은 push를 받으면 polling API로 결과를 조회한다. Source Item의 알림 페이로드(`NotificationPayload`)와는 무관한 별개 개념이다. |
 
 | subject 설정 | Subject Preference | 현재 구현 | subject당 한 행인 subject 축 설정 버킷(`subject_preferences`)이다. worker·배치나 앱 시작 경로가 subject만 들고 읽어야 하는 설정을 한 행에 모으는 자리이며, 지금 담긴 값은 예정 알림 마스터와 온보딩 완료 여부다. |
 | 예정 알림 마스터 | Push Enabled | 현재 구현 | subject별 예정 알림 전체 스위치(`subject_preferences.push_enabled`, 기본 ON)다. OFF는 예정 알림 발송만 막고 일일 알림 설정값은 보존한다. 타임라인 완료 통지는 사용자가 시작한 작업의 결과라 이 스위치를 따르지 않는다. 회원 탈퇴 transaction은 이 행을 지우지 않고 false로만 바꾼다(#367). |

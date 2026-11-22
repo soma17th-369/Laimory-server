@@ -90,6 +90,22 @@ class TimelineTaskServiceTest {
     }
 
     @Test
+    void markFailedIfPresent_storesNoEventsFailureCode() {
+        // 이벤트 0건(#658)도 task 실패 분류다 — FAILED + -1022로 저장돼 폴링 body.error로 나간다.
+        TimelineDraftTask task = TimelineDraftTask.processing(
+                SUBJECT_ID, RECORD_ID, null, tokenHashes("hash"), STARTED_AT)
+                .withTokenAndStage(tokenHashes("result"), ProcessStage.RESULT_PENDING);
+        when(timelineTaskStore.saveTerminalIfPresent(eq("t"), any(), eq(Duration.ofHours(24)))).thenReturn(true);
+
+        assertThat(service.markFailedIfPresent("t", task, ExceptionType.AI_REPORTED_NO_EVENTS)).isTrue();
+
+        ArgumentCaptor<TimelineDraftTask> saved = ArgumentCaptor.forClass(TimelineDraftTask.class);
+        verify(timelineTaskStore).saveTerminalIfPresent(eq("t"), saved.capture(), eq(Duration.ofHours(24)));
+        assertThat(saved.getValue().status()).isEqualTo(TaskStatus.FAILED);
+        assertThat(saved.getValue().error()).isEqualTo(-1022);
+    }
+
+    @Test
     void markFailed_storesNumericFailureCode() {
         service.markFailed("t", SUBJECT_ID, RECORD_ID, ExceptionType.AI_DISPATCH_FAILED, tokenHashes("hash"));
 
@@ -117,6 +133,7 @@ class TimelineTaskServiceTest {
     void resolveFailureType_onlyAcceptsTaskLocalCodes_andFallsBackForUnknownOrNull() {
         assertThat(List.of(
                 ExceptionType.AI_REPORTED_FAILURE,
+                ExceptionType.AI_REPORTED_NO_EVENTS,
                 ExceptionType.AI_DISPATCH_FAILED,
                 ExceptionType.DRAFT_TASK_FAILURE_FALLBACK))
                 .allSatisfy(type -> assertThat(TimelineTaskService.resolveFailureType(type.code()))

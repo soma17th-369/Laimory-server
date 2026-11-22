@@ -291,7 +291,8 @@ timeline·auth·persistence use case, schema, Redis TTL, callback 또는 cleanup
 - 결과 저장 endpoint는 graph를 쓰고 내부 stage를 CALLBACK_PENDING까지 전이한다. 외부 task 상태를
   SUCCESS/FAILED로 종결하는 책임은 콜백만 가진다.
 - callback body는 `status`, `errorCode`, `error`뿐이며 결과 graph를 전달하지 않는다.
-- callback `errorCode`와 Redis FAILED task `error`는 음수 JSON integer다. 문자열 코드는 허용하지 않는다.
+- callback `errorCode`는 AI 자체 실패 코드(양수 JSON integer)이고 Redis FAILED task `error`는 서버 음수 분류
+  코드(JSON integer)다. 문자열 코드는 허용하지 않는다.
 - callback·User Memory 결과의 자유 text `error`는 사용자 원문이 섞일 수 있어 저장·클라이언트 노출은
   물론 application log에도 남기지 않는다(수신 후 폐기 — taskId와 bounded numeric code만 로깅).
 - SUCCESS 콜백은 CALLBACK_PENDING, FAILED는 INPUT_PENDING/미선점 RESULT_PENDING에서만 허용한다(선점 중 FAILED 409는 위 claim guard 항목).

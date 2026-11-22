@@ -1,5 +1,6 @@
 package com.laimory.server.push.service;
 
+import com.laimory.server.common.error.ExceptionType;
 import com.laimory.server.push.PushMessage;
 import com.laimory.server.push.PushMessageSender;
 import com.laimory.server.push.PushMetrics;
@@ -9,6 +10,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -42,8 +44,19 @@ public class TimelineCompletionPushNotifier {
     private final PushMetrics pushMetrics;
     private final Clock clock;
 
+    /** terminal 상태만으로 완료 푸시를 보낸다 — FAILED는 일반 실패 문구다(유실 처리처럼 실패 분류를 나누지 않는 경로). */
     @Async
     public void notifyAsync(UUID subjectId, String taskId, TaskStatus status) {
+        deliver(subjectId, taskId, status, () -> PushMessage.timelineCompletion(taskId, status));
+    }
+
+    /** task에 저장한 실패 분류로 실패 푸시 문구를 고른다(이벤트 0건은 전용 문구 — #658). */
+    @Async
+    public void notifyFailedAsync(UUID subjectId, String taskId, ExceptionType failureType) {
+        deliver(subjectId, taskId, TaskStatus.FAILED, () -> PushMessage.timelineFailure(taskId, failureType));
+    }
+
+    private void deliver(UUID subjectId, String taskId, TaskStatus status, Supplier<PushMessage> messageFactory) {
         try {
             // snapshot은 조회보다 먼저 캡처한다 — 조회 결과의 어떤 행도 snapshot보다 나중에 재등록됐다면
             // (lastRegisteredAt > snapshotAt) 무효 정리에서 보호된다.
@@ -52,7 +65,7 @@ public class TimelineCompletionPushNotifier {
             if (firebaseInstallationIds.isEmpty()) {
                 return;
             }
-            PushMessage message = PushMessage.timelineCompletion(taskId, status);
+            PushMessage message = messageFactory.get();
             PushSendResult result = pushMessageSender.send(message, firebaseInstallationIds);
             // 발송 결과는 invalid registration DB 정리와 독립된 사실이다. 정리 실패 전에 먼저 기록한다.
             // 종류는 실제로 보낸 메시지에서 가져온다 — 따로 적으면 문구와 metric이 어긋날 수 있다.
