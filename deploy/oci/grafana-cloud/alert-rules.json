@@ -9,38 +9,6 @@
       "name": "laimory-oci-mysql",
       "rules": [
         {
-          "uid": "laimory_oci_replica_stopped",
-          "title": "OCI MySQL replica stopped",
-          "expr": "(1 - min by (environment, host) (laimory_oci_mysql_replica_running{environment=\"prod\",host=\"oci-prod\"})) + ((time() - max by (environment, host) (laimory_oci_mysql_replica_last_collect_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"})) > bool 300)",
-          "op": "gt",
-          "threshold": 0,
-          "for": "5m",
-          "noDataState": "Alerting",
-          "labels": {
-            "service": "laimory",
-            "severity": "critical"
-          },
-          "summary": "OCI MySQL replica IO or SQL thread is not running, or the replica status collector has stopped.",
-          "description": "Run SHOW REPLICA STATUS in the OCI mysql container (Last_IO_Error, Last_SQL_Error) and check laimory-oci-mysql-replica-status.timer. A disconnected IO thread retries on its own; this fires only after 5 minutes.",
-          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#mysql-replica"
-        },
-        {
-          "uid": "laimory_oci_replica_lag",
-          "title": "OCI MySQL replica lag high",
-          "expr": "max by (environment, host) (laimory_oci_mysql_replica_seconds_behind{environment=\"prod\",host=\"oci-prod\"})",
-          "op": "gt",
-          "threshold": 300,
-          "for": "10m",
-          "noDataState": "Alerting",
-          "labels": {
-            "service": "laimory",
-            "severity": "warning"
-          },
-          "summary": "OCI MySQL replica is more than 5 minutes behind prod.",
-          "description": "Check the Tailscale path to prod MySQL and the replica SQL thread. -1 (unknown) does not trigger this rule; a stopped thread is covered by the replica stopped rule.",
-          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#mysql-replica"
-        },
-        {
           "uid": "laimory_oci_mysqldump_stale",
           "title": "OCI MySQL dump backup stale",
           "expr": "time() - max by (environment, host) (laimory_oci_mysqldump_last_success_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"})",

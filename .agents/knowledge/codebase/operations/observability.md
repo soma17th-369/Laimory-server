@@ -433,7 +433,7 @@ rollback에서도 해당 target을 제거하지 않는다.
 ## OCI prod 경보 (Grafana Cloud Free)
 
 AWS `deploy/monitoring` 스택은 OCI host(api·ai·nginx·mysql 단일 host)로 가는 경로가 없어 그 host를 보지 않는다.
-OCI는 별도 경로다: compose 서비스 `alloy`가 api actuator·ai `/health`·host node 지표·textfile(MySQL 복제·백업)을
+OCI는 별도 경로다: compose 서비스 `alloy`가 api actuator·ai `/health`·host node 지표·textfile(MySQL 백업)을
 Grafana Cloud(Free) Prometheus로 remote_write하고, Grafana Cloud 경보가 같은 Discord 채널로 보낸다. 외부 시점은
 Synthetic Monitoring HTTP check(`api-laimory-readyz`, 서울 probe 1곳, 1분)가 `https://api.laimory.app/readyz`를 본다.
 
@@ -444,12 +444,13 @@ Synthetic Monitoring HTTP check(`api-laimory-readyz`, 서울 probe 1곳, 1분)�
   없어 관리자 Mac에서 `apply-alerting.py apply`가 provisioning HTTP API로 덮어쓴다(merge만으로 반영되지 않는다).
   provisioning으로 넣은 규칙은 UI 편집이 잠기며, 그 provenance 권한은 Admin role에만 있어 적용용 service account는 Admin이다.
 - label은 `environment=prod`, `host=oci-prod`, `instance=oci-prod` 고정값뿐이다. AWS 규칙과 달리 환경 중립이 아니라
-  host 고정 selector를 쓴다. 규칙은 NoData를 두 가지로 나눈다 — 수집 자체가 끊기면 알려야 하는 가용성·복제·백업 계열은
+  host 고정 selector를 쓴다. 규칙은 NoData를 두 가지로 나눈다 — 수집 자체가 끊기면 알려야 하는 가용성·백업 계열은
   NoData=Alerting, 저트래픽에서 최소 요청 수 gate로 비는 5xx·p95와 조건부 결과(Hikari 대기, TLS 30일 구간)는 NoData=OK.
   그래서 NoData=Alerting 규칙의 식은 정상일 때도 값(0)을 돌려줘야 한다 — `(...) > 0` 필터로 정상 결과를 비우면 정상
-  상태가 곧 경보가 된다(복제 정지 식은 `(1 - min(running)) + (수집 나이 > bool 300)`).
-- 복제 기간 전용 규칙(복제 정지·지연)과 replica 수집 timer는 `laimory.app` 전환 때 함께 지운다. lifecycle 3종은 AWS WAS와
-  같은 prod DB를 세므로 전환 때 옮기고, ERROR 로그 경보는 OCI 로그 저장소가 생길 때 옮긴다.
+  상태가 곧 경보가 된다(승격 전 복제 정지 규칙이 이 실수로 정상 복제 중 Pending에 들어간 적이 있다).
+- OCI MySQL은 2026-11-23부터 prod primary라 복제 정지·지연 규칙과 replica 수집 timer는 지웠다(규칙 14개).
+  lifecycle 3종은 AWS WAS가 계산해 AWS Prometheus로 내보내는 지표라 WAS가 OCI DB를 보는 지금도 그쪽에서 돈다 —
+  `laimory.app`을 OCI로 옮길 때 함께 옮기고, ERROR 로그 경보는 OCI 로그 저장소가 생길 때 옮긴다.
 - secret(metrics write token, service account token, webhook)과 stack 주소·remote_write URL·username은 저장소에 두지 않는다.
   metrics token은 host의 `0400 root` 파일이고 Alloy가 요청마다 읽으므로 같은 inode 덮어쓰기로 무중단 교체한다.
 
