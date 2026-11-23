@@ -82,6 +82,8 @@ Content-Type: application/json
   User Memory 배치는 같은 token으로 1s·2s·4s(+jitter) 뒤 세션 생성 허가를 다시 받아 최대 3번 재시도한다.
 - 세션 생성 limiter(#515): 접수 1건이 새 session 1개라(`prefix + taskId`) TIMELINE 대기열 worker와 User Memory 배치는
   접수 전에 Redis 250ms 창 카운터의 허가를 받는다(창당 `APP_AI_DISPATCH_LIMITER_PERMITS`, 어느 1초든 최대 5배).
+  limiter는 허가를 준 창을 세고 AgentCore는 도착 시각을 세므로, 허가는 접수 바로 앞에서 받고 `INCR` 응답을 받은 시각이
+  다른 창이면(스레드 멈춤) 그 허가는 버리고 지금 창에서 다시 센다.
   inline draft 접수는 허가를 받지 않는다 — 합산 한도 보장은 TIMELINE `route=queue`일 때만 성립한다.
 - 접수 대기 상한은 흐름별로 dispatcher가 요청마다 건다(#600 — client 하나를 공유하므로 client 기본값은 없다):
   timeline `apiCallAttemptTimeout` 5s·`apiCallTimeout` 7s(사용자 요청 스레드, 앱 draft POST 상한 10초 안),
