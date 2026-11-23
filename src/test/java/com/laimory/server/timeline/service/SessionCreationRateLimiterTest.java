@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 /**
  * 세션 생성 limiter(#515)의 창 계산·대기 판정과 throttle 재시도. Redis 카운터는 mock이고 시계는 테스트가 움직인다 — 대기는
@@ -74,6 +77,42 @@ class SessionCreationRateLimiterTest {
         // 다음 창 시작까지 남은 150ms에 jitter(0~50ms)를 더해 한 번 기다린다.
         assertThat(sleeps).hasSize(1);
         assertThat(sleeps.get(0)).isBetween(Duration.ofMillis(150), Duration.ofMillis(200));
+    }
+
+    @Test
+    void permitWhoseWindowEndedWhileWaitingForRedisIsDiscardedAndRecountedInCurrentWindow() {
+        // 창 0(100ms 지점)에서 INCR을 보냈는데 응답을 받고 다시 실행된 시각이 창 1이다(스레드가 멈췄다). 창 0 허가로
+        // 지금 보내면 창 1 몫에 얹히므로 버리고 창 1에서 다시 센다.
+        long firstWindow = START_MILLIS / 250;
+        when(redis.incrementWithTtlOnCreate(eq(SessionCreationRateLimiter.KEY_PREFIX + firstWindow), any()))
+                .thenAnswer(invocation -> {
+                    clock.advance(200);
+                    return 1L;
+                });
+        when(redis.incrementWithTtlOnCreate(eq(SessionCreationRateLimiter.KEY_PREFIX + (firstWindow + 1)), any()))
+                .thenReturn(1L);
+
+        boolean granted = limiter().tryAcquire();
+
+        assertThat(granted).isTrue();
+        InOrder order = inOrder(redis);
+        order.verify(redis).incrementWithTtlOnCreate(eq(SessionCreationRateLimiter.KEY_PREFIX + firstWindow), any());
+        order.verify(redis).incrementWithTtlOnCreate(
+                eq(SessionCreationRateLimiter.KEY_PREFIX + (firstWindow + 1)), any());
+        assertThat(sleeps).isEmpty();
+    }
+
+    @Test
+    void discardedPermitPastDeadlineReturnsFalseWithoutRecounting() {
+        when(redis.incrementWithTtlOnCreate(anyString(), any())).thenAnswer(invocation -> {
+            clock.advance(200);
+            return 1L;
+        });
+
+        boolean granted = limiter().tryAcquire(Duration.ZERO);
+
+        assertThat(granted).isFalse();
+        verify(redis, times(1)).incrementWithTtlOnCreate(anyString(), any());
     }
 
     @Test

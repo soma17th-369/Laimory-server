@@ -18,6 +18,9 @@ import org.springframework.stereotype.Component;
  * 어느 1초를 잘라도 최대 {@code 5L}건, 평균은 {@code 4L}건/초다. 1초 창에 25를 주면 창 경계를 사이에 두고 1초 안에
  * 최대 50건이 나갈 수 있어 쓰지 않는다. 한도에 걸리면 다음 창 시작까지 기다렸다가(0~50ms jitter) 다시 센다.
  *
+ * <p>limiter가 세는 것은 허가를 준 창이고 AgentCore가 세는 것은 요청이 도착한 시각이다. 그래서 허가는 요청 바로 앞에서
+ * 받아야 하고(호출부 책임), 허가를 세는 동안 스레드가 멈춰 창이 바뀌었으면 그 허가는 버리고 지금 창에서 다시 센다.
+ *
  * <p>창 번호는 앱 시계로 정한다. 인스턴스 간 시계 오차(ms 단위)로 생기는 미세 초과는 AgentCore throttle과 그 재시도가
  * 흡수한다. Redis 오류는 그대로 전파한다(fail-closed) — 세지 못하면 보내지 않는다. 카운터 key는 환경 prefix가 붙으므로
  * 같은 AWS 계정을 쓰는 환경끼리는 {@code L}을 나눠 정한다(예: prod 4 + dev 1).
@@ -65,9 +68,18 @@ public class SessionCreationRateLimiter {
     boolean tryAcquire(Duration maxWait) {
         long deadline = clock.millis() + maxWait.toMillis();
         while (true) {
-            long now = clock.millis();
-            long window = Math.floorDiv(now, WINDOW_MILLIS);
+            long window = Math.floorDiv(clock.millis(), WINDOW_MILLIS);
             long count = redis.incrementWithTtlOnCreate(KEY_PREFIX + window, WINDOW_KEY_TTL);
+            // INCR 응답을 받고 다시 실행된 시각이 다른 창이면 그 사이 스레드가 멈춘 것이다(바쁜 서버의 CPU 대기 등). 이 허가로
+            // 지금 보내면 다음 창 몫에 얹혀 창당 상한을 넘으므로(#515 test 부하 300건에서 창당 7건) 버리고 지금 창에서 다시 센다.
+            // 버린 허가는 이미 지난 창의 몫이라 앞으로의 창 자리를 줄이지 않는다.
+            long now = clock.millis();
+            if (Math.floorDiv(now, WINDOW_MILLIS) != window) {
+                if (now > deadline) {
+                    return false;
+                }
+                continue;
+            }
             if (count <= permitsPerWindow) {
                 return true;
             }
