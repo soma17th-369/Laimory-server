@@ -107,7 +107,6 @@ load-tests/kakao-simulator/
 │   └── keyword-response.json
 ├── simulator-preflight.js
 └── scripts/
-    ├── ai-dispatch-rate.py   # journal로 AI 접수 송신률 판정(#515)
     └── verify-contract.sh
 ```
 
