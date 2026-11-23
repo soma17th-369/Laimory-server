@@ -107,7 +107,8 @@ worker를 오래 꺼 두면 4분(큐 경로 처리 기한) 뒤 유실 처리가 
 | `timeline 대기열 접수 완료` | AI 접수 확인 |
 | `timeline ai dispatch enqueue rejected (미적재 확정)` | SendMessage 4xx — draft POST 502(`-1009`)·환불 |
 | `timeline ai dispatch enqueue outcome unknown` | SendMessage 결과 불명 — 202, 미적재면 유실 타이머가 종결 |
-| `timeline 세션 생성 허가 대기 초과` | limiter 10초 대기 초과 — 5초 뒤 다시 받는다 |
+| `timeline 접수 대기 예산 안에 세션 생성 허가를 받지 못함` | 접수 대기 예산(60s) 안에 허가를 못 받음 — 접수하지 않고 FAILED(`-1009`)·환불 |
+| `timeline 세션 생성 허가 확인 실패` | limiter Redis 오류 — 접수하지 않고 FAILED(`-1009`)·환불 |
 | `AI 접수 throttle 재시도` | AgentCore 용량 한도 거절 뒤 재시도 |
 | `timeline ai dispatch rejected (미접수 확정)` | AI 거절 — FAILED(`-1009`)·환불 |
 | `timeline ai dispatch outcome unknown, keeping PROCESSING` | 접수 불명 — 재전송 없음 |

@@ -144,8 +144,8 @@ class TimelineDispatchQueueWorkerTest {
     }
 
     private void acceptsStageWrite() {
-        when(limiter.tryAcquire()).thenReturn(true);
         when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+        when(limiter.tryAcquire(any(Duration.class))).thenReturn(true);
     }
 
     private void assertDeleted() {
@@ -167,7 +167,7 @@ class TimelineDispatchQueueWorkerTest {
     }
 
     @Test
-    void acceptedMessageWritesInputPendingBeforeDispatchingWithTheSameToken() {
+    void acceptedMessageWritesInputPendingThenTakesPermitRightBeforeDispatchingWithTheSameToken() {
         claimableTask(dispatchPending());
         acceptsStageWrite();
 
@@ -175,8 +175,10 @@ class TimelineDispatchQueueWorkerTest {
 
         ArgumentCaptor<TimelineDraftTask> written = ArgumentCaptor.forClass(TimelineDraftTask.class);
         ArgumentCaptor<AiTimelineDispatchRequest> sent = ArgumentCaptor.forClass(AiTimelineDispatchRequest.class);
-        InOrder order = inOrder(timelineTaskService, timelineAiDispatcher);
+        // 허가는 전이 뒤, 접수 바로 앞이다 — 허가 시각과 실제 요청 시각 사이에 Redis 쓰기가 끼지 않는다.
+        InOrder order = inOrder(timelineTaskService, limiter, timelineAiDispatcher);
         order.verify(timelineTaskService).saveProcessingIfPresent(eq(TASK_ID), written.capture());
+        order.verify(limiter).tryAcquire(any(Duration.class));
         order.verify(timelineAiDispatcher).dispatch(sent.capture());
         assertThat(written.getValue().stage()).isEqualTo(ProcessStage.INPUT_PENDING);
         assertThat(written.getValue().processingStartedAt()).isEqualTo(STARTED_AT);
@@ -252,16 +254,49 @@ class TimelineDispatchQueueWorkerTest {
     }
 
     @Test
-    void noSessionPermitReleasesClaimAndRetriesLaterWithoutTouchingTask() {
+    void permitWaitIsBoundedByRemainingQueueWaitBudget() {
+        // 큐에서 5초 기다린 task — 허가는 남은 예산(60s - 5s)까지만 기다린다.
         claimableTask(dispatchPending());
-        when(limiter.tryAcquire()).thenReturn(false);
+        acceptsStageWrite();
 
         worker.process(message(TASK_ID, RECORD_ID, RECEIPT));
 
-        verify(timelineTaskService).releaseQueuedDispatchClaim(TASK_ID);
-        verify(timelineTaskService, never()).saveProcessingIfPresent(anyString(), any());
+        verify(limiter).tryAcquire(TimelineTaskService.DISPATCH_QUEUE_WAIT_BUDGET.minusSeconds(5));
+    }
+
+    @Test
+    void noSessionPermitWithinBudgetClosesAsNotAcceptedWithTheWrittenTokenHash() {
+        // 전이를 이미 썼으므로 메시지를 돌려보내지 않는다(재전달은 단계 검사에서 건너뛰어진다) — 접수하지 않았음이
+        // 확실하므로 미접수 확정과 같이 종결한다.
+        claimableTask(dispatchPending());
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+        when(limiter.tryAcquire(any(Duration.class))).thenReturn(false);
+
+        worker.process(message(TASK_ID, RECORD_ID, RECEIPT));
+
+        ArgumentCaptor<TimelineDraftTask> written = ArgumentCaptor.forClass(TimelineDraftTask.class);
+        verify(timelineTaskService).saveProcessingIfPresent(eq(TASK_ID), written.capture());
         verify(timelineAiDispatcher, never()).dispatch(any());
-        assertRetriedLater();
+        verify(creditService).refund(CreditCostType.TIMELINE_CREATION, TASK_ID,
+                CreditRefundReason.DISPATCH_REJECTED);
+        verify(timelineTaskService).markFailed(TASK_ID, SUBJECT_ID, RECORD_ID, ExceptionType.AI_DISPATCH_FAILED,
+                written.getValue().tokenHash());
+        verify(timelineTaskService, never()).releaseQueuedDispatchClaim(anyString());
+        assertDeleted();
+    }
+
+    @Test
+    void limiterRedisFailureAfterTransitionClosesAsNotAccepted() {
+        claimableTask(dispatchPending());
+        when(timelineTaskService.saveProcessingIfPresent(eq(TASK_ID), any())).thenReturn(true);
+        when(limiter.tryAcquire(any(Duration.class))).thenThrow(new IllegalStateException("redis down"));
+
+        worker.process(message(TASK_ID, RECORD_ID, RECEIPT));
+
+        verify(timelineAiDispatcher, never()).dispatch(any());
+        verify(creditService).refund(CreditCostType.TIMELINE_CREATION, TASK_ID,
+                CreditRefundReason.DISPATCH_REJECTED);
+        assertDeleted();
     }
 
     @Test
@@ -299,6 +334,8 @@ class TimelineDispatchQueueWorkerTest {
     void throttledDispatchIsRetriedAndAcceptedWithoutRefund() {
         claimableTask(dispatchPending());
         acceptsStageWrite();
+        // throttle 재시도는 limiter 안에서 기본 대기 상한으로 허가를 다시 받는다.
+        when(limiter.tryAcquire()).thenReturn(true);
         doThrow(new TimelineAiDispatchThrottledException("throttled", null))
                 .doNothing()
                 .when(timelineAiDispatcher).dispatch(any());
