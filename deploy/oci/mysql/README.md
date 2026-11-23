@@ -1,24 +1,22 @@
-# OCI MySQL: prod replica · 백업 · 복구
+# OCI MySQL: prod primary · 백업 · 복구
 
-OCI host에서 compose 서비스 `mysql`(`mysql:8.0.46`, digest 고정)로 도는 MySQL을 prod(AWS) MySQL의
-replica로 따라가게 하고, 그 DB를 R2에 백업·복구하는 구성이다. 실제 전환(쓰기 정지·승격·앱 DB 주소 변경)은
-이 문서의 범위가 아니다.
+OCI host에서 compose 서비스 `mysql`(`mysql:8.0.46`, digest 고정)로 도는 **prod primary** MySQL과 그 R2
+백업·복구 구성이다. 2026-11-23에 AWS MySQL의 replica에서 승격됐다(binlog 위치 복제 → 쓰기 정지 → 대조 → 승격).
+AWS MySQL은 읽기 전용으로 남아 있고 쓰지 않는다.
 
-- 복제: binlog **위치 기반**(prod는 GTID off). prod는 x86_64, OCI는 arm64라 clone plugin을 쓸 수 없어
-  논리 dump로 시드한 뒤 그 좌표부터 복제한다. 경로는 Tailscale, 계정 단위 TLS.
+- 클라이언트: API는 아직 AWS WAS 2대(`laimory.app` → ALB)에서 돌고 Tailscale로 이 DB의 3306에 붙는다. OCI api는
+  compose 네트워크에서 `mysql:3306`. WAS ↔ OCI는 DERP 릴레이 경유라 쿼리마다 약 40ms가 더해진다.
 - 백업: 매일 04:15 KST dump + binlog 1분 반출 → R2 전용 버킷. 보관은 R2 lifecycle(`mysqldump/` 30일,
   `binlog/` 35일). 단일 host라 **R2가 유일한 오프호스트 사본**이고, host 전손 때 손실 창은 binlog timer 주기(1분)다.
 - 지표: 스크립트가 `/var/lib/laimory/textfile/*.prom`에 쓰고 Alloy가 Grafana Cloud로 보낸다.
 
 | 파일 | host 위치 | 역할 |
 |---|---|---|
-| `laimory.cnf` | `/opt/laimory/mysql/conf.d/laimory.cnf` | 서버 설정(server_id 2, ROW binlog, `log_replica_updates`, 복제 필터, read-only) |
-| `scripts/configure-oci-mysql-local-users.sh` | 1회 실행 | OCI 로컬 `laimory_backup`·`laimory_monitor` 생성, 비밀번호를 설정 파일에 기록 |
-| `scripts/configure-mysql-replication-user.sh` | prod host에서 1회 실행 | prod `laimory_repl`·`laimory_seed` 생성 / 시드 후 `laimory_seed` 삭제 |
+| `laimory.cnf` | `/opt/laimory/mysql/conf.d/laimory.cnf` | 서버 설정(server_id 2, ROW binlog, 로컬 binlog 7일) |
+| `scripts/configure-oci-mysql-local-users.sh` | 1회 실행 | OCI 로컬 `laimory_backup` 생성, 비밀번호를 설정 파일에 기록 |
 | `scripts/backup-oci-mysql-dump.sh` | `/usr/local/sbin/backup-oci-mysql-dump` | dump → 검증 → R2 |
 | `scripts/upload-oci-binlog.sh` | `/usr/local/sbin/upload-oci-binlog` | binlog 완결본·tail → R2 |
-| `scripts/collect-oci-mysql-replica.sh` | `/usr/local/sbin/collect-oci-mysql-replica` | 복제 스레드·지연 지표(복제 기간 전용) |
-| `systemd/*` | `/etc/systemd/system/` | 위 세 스크립트의 service·timer |
+| `systemd/*` | `/etc/systemd/system/` | 위 두 백업 스크립트의 service·timer |
 
 ## compose 서비스
 
@@ -32,17 +30,19 @@ replica로 따라가게 하고, 그 DB를 R2에 백업·복구하는 구성이�
       - ./mysql/data:/var/lib/mysql
       - ./mysql/conf.d/laimory.cnf:/etc/mysql/conf.d/laimory.cnf:ro
       - ./secrets/mysql-root-password:/run/secrets/mysql-root-password:ro
+    # AWS WAS가 Tailscale로 접속한다. 인터넷은 OCI 보안 목록(80·443만)이 막고, 계정은 WAS Tailscale IP로 제한한다.
+    ports: ["3306:3306"]
     oom_score_adj: -500        # 메모리 부족 시 커널이 mysqld보다 api를 먼저 고르게
     stop_grace_period: 120s    # InnoDB 정상 종료 시간
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "--protocol=socket"]
     restart: unless-stopped
-    networks: [laimory]        # 호스트 포트 publish 없음 — api는 compose 네트워크에서 mysql:3306
+    networks: [laimory]        # OCI api는 compose 네트워크에서 mysql:3306
 ```
 
 - 이미지가 만드는 `root@'%'`는 지운다(`SET sql_log_bin=0; DROP USER 'root'@'%';`). root는 컨테이너 안 localhost만 쓴다.
-- **빈 datadir 초기화 때는 `super_read_only`를 끈 채로 띄운다.** 이미지 entrypoint의 초기화 SQL이 read-only에
-  막힌다. 초기화가 끝나면 override 없이 다시 띄운다.
+- 3306은 Tailscale IP가 아니라 모든 인터페이스에 게시한다. Tailscale IP에만 bind하면 재부팅 때 docker가
+  tailscaled보다 먼저 뜨는 순간 bind가 실패해 mysql이 기동하지 않는다.
 - compose 네트워크 정의를 바꾼 뒤 `up -d`만 하면 일부 컨테이너가 서비스 이름 alias 없이 다시 붙는다.
   `mysql`만 추가·교체할 때는 `docker compose up -d mysql`로 다른 서비스를 재생성하지 않는다.
 
@@ -55,7 +55,6 @@ sudo NEEDRESTART_MODE=l apt-get install -y --no-install-recommends mysql-server-
 
 sudo install -m 0755 scripts/backup-oci-mysql-dump.sh /usr/local/sbin/backup-oci-mysql-dump
 sudo install -m 0755 scripts/upload-oci-binlog.sh /usr/local/sbin/upload-oci-binlog
-sudo install -m 0755 scripts/collect-oci-mysql-replica.sh /usr/local/sbin/collect-oci-mysql-replica
 sudo install -m 0644 systemd/* /etc/systemd/system/
 sudo systemctl daemon-reload
 ```
@@ -72,11 +71,9 @@ MYSQL_DATADIR=<datadir의 host 경로>
 RCLONE_CONFIG=/etc/laimory/rclone-r2-backup.conf
 R2_REMOTE=<rclone remote>:<버킷>
 R2_PREFIX=                      # 운영은 비움. 리허설은 rehearsal/
-# 아래 네 줄은 configure-oci-mysql-local-users.sh가 쓴다.
+# 아래 두 줄은 configure-oci-mysql-local-users.sh가 쓴다.
 MYSQL_BACKUP_USER=laimory_backup
 MYSQL_BACKUP_PASSWORD=...
-MYSQL_MONITOR_USER=laimory_monitor
-MYSQL_MONITOR_PASSWORD=...
 ```
 
 `/etc/laimory/rclone-r2-backup.conf` — R2 토큰은 **이 버킷 한정 Object Read & Write**로 대시보드에서 발급한다.
@@ -92,45 +89,25 @@ acl = private
 no_check_bucket = true        # 버킷 한정 토큰은 버킷 생성 확인 권한이 없다
 ```
 
-## 복제 시작 (시드)
+## 앱 접속
 
-1. prod host 대화형 세션의 root 셸: `bash configure-mysql-replication-user.sh create <OCI 주소>`.
-   비밀번호 두 개를 입력하고, 같은 값을 OCI 쪽 0600 파일로만 옮긴다(send-command·대화·로그에 남기지 않는다).
-2. OCI 로컬 계정: `sudo bash scripts/configure-oci-mysql-local-users.sh`.
-3. 저트래픽 시각에 시드 dump. 시작 순간 짧은 전역 잠금(FTWRL)을 잡으므로 직전에 prod
-   `SHOW PROCESSLIST`로 긴 쿼리가 없는지 본다. host에는 `mysqldump`가 없으므로(`mysql-server-core-8.0`에
-   없다) mysql 컨테이너 안의 클라이언트로 뜬다. 비밀번호는 `-e MYSQL_PWD`로 호출자 env에서 넘긴다.
+| 계정 | host | 권한 | TLS |
+|---|---|---|---|
+| `laimory`(앱 DataSource) | WAS별 Tailscale IP, compose 대역(OCI api) | `laimory.*` DML | WAS는 `REQUIRE SSL` |
+| `laimory_flyway`(migration) | WAS별 Tailscale IP | `laimory.*` DML + `CREATE, DROP, REFERENCES, INDEX, ALTER` | `REQUIRE SSL` |
 
-   ```bash
-   docker exec -e MYSQL_PWD <mysql 컨테이너> mysqldump --host=<prod 주소> --user=laimory_seed --ssl-mode=REQUIRED \
-     --single-transaction --source-data=2 --no-tablespaces --databases laimory | gzip > seed.sql.gz
-   ```
-
-4. 적재: `SET GLOBAL super_read_only=OFF` → `zcat seed.sql.gz | mysql` → 테이블 수·Flyway 최신 버전 확인 →
-   `SET GLOBAL super_read_only=ON`.
-5. 복제 시작(좌표는 dump 앞부분의 `CHANGE MASTER TO` 주석). 필터는 `laimory.cnf`의 `replicate_wild_do_table`이
-   이미 건다 — `CHANGE REPLICATION FILTER`로 건 필터는 재시작하면 사라진다.
-
-   ```sql
-   CHANGE REPLICATION SOURCE TO
-     SOURCE_HOST = '<prod 주소>', SOURCE_PORT = 3306,
-     SOURCE_USER = 'laimory_repl', SOURCE_PASSWORD = '<…>',
-     SOURCE_LOG_FILE = '<dump 좌표>', SOURCE_LOG_POS = <dump 좌표>,
-     SOURCE_SSL = 1, SOURCE_CONNECT_RETRY = 10, SOURCE_RETRY_COUNT = 86400,
-     SOURCE_HEARTBEAT_PERIOD = 30;
-   START REPLICA;
-   ```
-
-   `SOURCE_PASSWORD`는 `mysql.slave_master_info`에 평문으로 남는다(재시작 후 자동 재개를 위한 MySQL 기본 동작).
-   datadir은 0700이고, 전환 때 `RESET REPLICA ALL`로 지운다.
-6. prod: `bash configure-mysql-replication-user.sh drop-seed <OCI 주소>`. 이 DROP은 복제로 넘어오지만
-   필터가 계정 문장을 건너뛴다.
+- 권한은 AWS MySQL 시절과 같다. 비밀번호도 같아서 WAS·OCI api는 `.env`의 `DB_HOST`만 바꿨다. 계정은 원본의
+  `SHOW CREATE USER`(`print_identified_with_as_hex=ON`) 해시를 옮겨 만들었다 — 비밀번호 원문을 꺼내지 않는다.
+- **OCI의 Tailscale은 `--snat-subnet-routes=false`여야 한다.** 기본값(true)은 tailscale0으로 들어와 docker로 포워딩되는
+  패킷을 MASQUERADE해서 MySQL이 WAS를 compose 브리지 게이트웨이 주소로 본다. 그러면 Tailscale IP 단위 계정이
+  맞지 않아 Flyway 계정이 1045로 거절되고, 같은 비밀번호인 compose 대역 계정에 엉뚱하게 붙는다.
+- Tailscale ACL은 WAS 태그 → OCI `tcp:3306`만 허용한다. WAS를 새로 만들면 Tailscale 가입·계정 host·ACL을 함께 맞춘다.
+- JDBC URL은 포트 3306이 고정이고 sslMode를 지정하지 않아(PREFERRED) TLS로 붙는다.
 
 ## 백업
 
 ```bash
-sudo systemctl enable --now laimory-oci-binlog-upload.timer laimory-oci-mysql-replica-status.timer \
-  laimory-oci-mysqldump-backup.timer
+sudo systemctl enable --now laimory-oci-binlog-upload.timer laimory-oci-mysqldump-backup.timer
 sudo systemctl start laimory-oci-mysqldump-backup.service   # 첫 dump를 바로 뜬다
 ```
 
@@ -156,7 +133,7 @@ R2 토큰이 읽기도 되므로 OCI host에서 바로 복구할 수 있다. **R
 2. `binlog/<uuid>/`에서 좌표의 파일부터 이후 전부를 받는다. `tail/`의 사본은 **정규 key에 같은 이름이
    없을 때만, 항상 마지막 파일로만** 쓴다.
 3. 격리된 임시 mysqld에 적재·재생한다. 같은 이미지, `--network none`, 임시 datadir, 같은 `laimory.cnf`에
-   `--super-read-only=OFF --read-only=OFF --server-id=<운영과 다른 값> --skip-replica-start`를 덧붙여 띄운다.
+   `--server-id=<운영과 다른 값>`을 덧붙여 띄운다.
    dump가 `--databases laimory`라 `USE laimory`를 포함하므로, 운영 중인 다른 서버에 적재하면 그쪽을 덮어쓴다.
 
    ```bash
@@ -174,5 +151,5 @@ R2 토큰이 읽기도 되므로 OCI host에서 바로 복구할 수 있다. **R
 
 ## 정리
 
-timer 3개 disable → unit·`/usr/local/sbin` 스크립트·`/var/lib/laimory/oci-mysql`·`/var/lib/laimory/textfile/laimory_oci_*.prom`
-삭제 → 설정 파일 2개 삭제 → 대시보드에서 R2 토큰 폐기. prod에서는 `laimory_repl` DROP.
+timer 2개 disable → unit·`/usr/local/sbin` 스크립트·`/var/lib/laimory/oci-mysql`·`/var/lib/laimory/textfile/laimory_oci_*.prom`
+삭제 → 설정 파일 2개 삭제 → 대시보드에서 R2 토큰 폐기.

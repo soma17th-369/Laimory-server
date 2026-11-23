@@ -5,14 +5,14 @@ OCI 단일 호스트(api·ai·nginx·mysql)의 경보다. AWS의 `deploy/monitor
 
 ```text
 OCI host ── alloy(compose 서비스) ──remote_write──▶ Grafana Cloud(Prometheus) ──경보──▶ Discord
-   │  api:9090 actuator · ai:8080/health · 호스트 /proc·/sys · textfile(MySQL 복제·백업)
+   │  api:9090 actuator · ai:8080/health · 호스트 /proc·/sys · textfile(MySQL 백업)
 Synthetic Monitoring(서울 probe) ──▶ https://api.laimory.app/readyz ─────────┘
 ```
 
 | 파일 | 내용 |
 |---|---|
 | `../alloy/config.alloy` | 수집 대상과 내보낼 지표 목록(keep 규칙) |
-| `alert-rules.json` | 경보 16개(규칙 원본) |
+| `alert-rules.json` | 경보 14개(규칙 원본) |
 | `notification.json` | Discord 메시지 템플릿·contact point 이름·알림 정책 |
 | `apply-alerting.py` | 위 JSON을 Grafana Cloud API로 적용·상태 조회(관리자 Mac에서 실행) |
 
@@ -120,7 +120,7 @@ deploy/oci/grafana-cloud/apply-alerting.py apply
 deploy/oci/grafana-cloud/apply-alerting.py status
 ```
 
-`status`에서 16개 모두 `inactive`(Normal)이고 health가 `ok`여야 한다. `nodata`면 지표 이름·label이나 keep
+`status`에서 14개 모두 `inactive`(Normal)이고 health가 `ok`여야 한다. `nodata`면 지표 이름·label이나 keep
 규칙을, `error`면 식을 확인한다.
 
 ## 4. 발화·해소 시험
@@ -129,25 +129,15 @@ api·ai·nginx는 멈추지 않는다. prod MySQL은 건드리지 않는다.
 
 | 경보 | 방법 |
 |---|---|
-| OCI MySQL replica stopped | OCI mysql 컨테이너에서 `STOP REPLICA IO_THREAD` → 발화 확인 → `START REPLICA IO_THREAD` → 해소 확인 |
 | OCI MySQL binlog upload stale | `systemctl stop laimory-oci-binlog-upload.timer` → 약 16분 뒤 발화 → `start` → 해소 |
 | 나머지 | `apply --threshold <uid>=<항상 참인 값>`으로 임시 임계값을 넣어 발화 확인 → `apply`(인자 없이)로 원복 → 해소 |
 
 ## 경보별 대응
 
-### mysql-replica
-
-복제 기간(OCI가 prod의 replica인 동안) 전용이다. `laimory.app` 전환 때 이 두 규칙과
-`laimory-oci-mysql-replica-status` timer를 함께 지운다.
-
-- OCI mysql 컨테이너에서 `SHOW REPLICA STATUS\G`의 `Last_IO_Error`·`Last_SQL_Error`를 본다.
-- IO 스레드 끊김은 `SOURCE_CONNECT_RETRY`로 스스로 재접속한다. 5분 넘게 이어질 때만 발화한다.
-- 수집 timer가 멈춰 값이 굳어도(`last_collect`가 5분 넘게 오래됨) 정지로 본다.
-
 ### mysql-backup
 
 `deploy/oci/mysql/README.md`의 백업 절과 timer 로그(`journalctl -u laimory-oci-mysqldump-backup`,
-`-u laimory-oci-binlog-upload`)를 본다. 전환 뒤에도 유지하는 경보다.
+`-u laimory-oci-binlog-upload`)를 본다.
 
 ### availability
 

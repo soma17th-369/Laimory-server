@@ -109,7 +109,7 @@ INPUT_PENDING
   task에 Lua script는 없다. `XX`는 key 존재만 보고 값을 비교하지 않으므로 잘못된 요청 차단은 write 전
   token/status/stage 검증이 담당하고, missing task는 write에 실패해(404) 만료 task를 부활시키지 않는다.
   `KEEPTTL`이라 어떤 stage write도 최초 PROCESSING 저장이 정한 만료 시각(5분)을 연장하지 않는다. 이 계약은 통제된
-  단일·순차 AI writer의 timeout 재시도(첫 재시도 약 3.5초 뒤)를 보장 대상으로 하며, 같은 task/token
+  단일·순차 AI writer의 timeout 재시도(AI 기본값 기준 첫 재시도 약 3.5초 뒤, prod는 약 10.5초 뒤 — 4절)를 보장 대상으로 하며, 같은 task/token
   요청 둘을 첫 state write 전에 실제 동시 실행하는 경우는 last-write-wins로 수용한다. processing
   index는 보조 데이터로 최초 PROCESSING 생성과 terminal 전이에서만 갱신하고, 실패는 같은 의도의 명령을
   한 번 재시도한다.
@@ -271,6 +271,9 @@ clamp한다.
 최초 시작 기준으로 고정된 PROCESSING TTL과 마찬가지로 재발급으로 미끄러지지 않는다. AI 재시도 예산
 (시도당 timeout 3s·첫 backoff 0.5s·최대 3회 — 첫 재시도 약 3.5초 뒤, 실패 확정 약 10.5초)보다 크고
 처리 기한(3분)보다 작아야 한다 — AI의 read timeout이 12초를 넘으면 그만큼 늘린다.
+2026-11-23 현재 prod AgentCore와 OCI ai는 `APP_SERVER_TIMEOUT_SEC=10`이다(WAS·OCI api ↔ DB 왕복 약 40ms ×
+결과 저장 행별 INSERT로 저장이 3초를 넘기 때문). 첫 재시도(약 10.5초 뒤)는 창 안이지만 세 번째 시도(약 21.5초 뒤)와
+실패 확정(약 31.5초)은 15초 창 밖이다 — 서버 응답이 두 번 연속 10초를 넘는 경우에만 해당한다.
 
 ### 5. 상태 Callback (AI → API)
 

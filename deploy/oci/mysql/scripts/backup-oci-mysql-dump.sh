@@ -2,8 +2,7 @@
 # OCI host의 mysql 컨테이너를 논리 덤프해 R2에 올리고, 마지막 성공 시각을 textfile 지표로 남긴다.
 # 설정(컨테이너·계정·R2 위치)은 host의 /etc/laimory/oci-mysql.env가 소유한다 — 저장소에 두지 않는다.
 #
-# 복제 기간에는 replica에서 뜬다. --source-data는 이 서버 자신의 binlog 좌표를 기록하고,
-# log_replica_updates라 복제분도 이 서버 binlog에 있으므로 승격 전후가 같은 PITR 사슬이 된다.
+# --source-data는 이 서버 자신의 binlog 좌표를 기록한다 — PITR은 이 좌표부터 R2의 binlog를 재생한다.
 set -euo pipefail
 
 readonly CONFIG_FILE=${LAIMORY_OCI_MYSQL_ENV:-/etc/laimory/oci-mysql.env}
