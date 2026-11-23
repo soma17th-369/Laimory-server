@@ -147,6 +147,12 @@ application 배포·health gate 의존성이 아니다.
 - AgentCore mode 전용(`app.ai.mode=agentcore`에서만 소비·기동 시 형식·리전 검증):
   `APP_AI_AGENTCORE_RUNTIME_ARN`, `APP_AI_AGENTCORE_ENDPOINT`(자격증명은 SDK 기본 체인 —
   access key property를 추가하지 않는다)
+- AI 접수 대기열(#515, 전부 선택·기본은 현행 동작): `APP_AI_DISPATCH_TIMELINE_ROUTE`(`inline` 기본 | `queue`),
+  `APP_AI_DISPATCH_QUEUE_TIMELINE_URL`(route=queue 또는 worker 사용 시 필수 — SQS URL 형식·`aws.region` 일치를 기동
+  시 검증), `APP_AI_DISPATCH_WORKER_ENABLED`(기본 false), `APP_AI_DISPATCH_WORKER_SLOTS`(기본 16),
+  `APP_AI_DISPATCH_LIMITER_PERMITS`(250ms 창당 세션 생성 허가, 기본 5 — 같은 AWS 계정을 쓰는 환경끼리 나눠 정한다).
+  deploy preflight는 아직 이 key들을 검사하지 않는다 — 잘못된 값은 앱 기동 검증이 막는다. 값·순서·확인 절차는
+  [AI 접수 대기열 runbook](../../../../docs/operations/ai-dispatch-queue.md)이 소유한다.
 - Kakao 전용 HTTP 자원 경계(`app.geo.http.*`·`app.geo.retry.*`·`app.geo.circuit.*` — 같은 이름의
   upper-snake env가 override, kakao mode에서만 소비·기동 시 교차 validation):
   `APP_GEO_HTTP_POOL_MAX_CONNECTIONS`, `APP_GEO_HTTP_POOL_PENDING_ACQUIRE_MAX_COUNT`,

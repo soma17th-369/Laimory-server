@@ -6,8 +6,10 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -85,6 +87,10 @@ class UserMemoryUpdateWorkerTest {
     private UserMemoryService userMemoryService;
     @Mock
     private UserMemoryUpdateDispatcher dispatcher;
+    // 세션 생성 limiter(#515)는 Redis 카운터라 mock이다. 기본은 허가하고, 허가 테스트만 바꾼다. throttle 재시도는
+    // 실물 로직을 부르고 그 안의 허가·대기만 mock이 받는다(대기는 실제로 자지 않는다).
+    @Mock
+    private SessionCreationRateLimiter limiter;
 
     // 치환 검증은 실물 redactor로 하고, 실패 주입 테스트만 mock으로 바꿔 끼운다.
     private final PrivacyRedactor privacyRedactor = new PrivacyRedactor();
@@ -93,8 +99,14 @@ class UserMemoryUpdateWorkerTest {
 
     @BeforeEach
     void setUp() {
-        worker = new UserMemoryUpdateWorker(pendingStore, taskStore, dailyRecordService, timelineEventService,
-                userMemoryService, dispatcher, privacyRedactor, Clock.fixed(NOW, ZoneOffset.UTC));
+        lenient().when(limiter.tryAcquire()).thenReturn(true);
+        lenient().doCallRealMethod().when(limiter).runWithThrottleRetry(any());
+        worker = newWorker(privacyRedactor);
+    }
+
+    private UserMemoryUpdateWorker newWorker(PrivacyRedactor redactor) {
+        return new UserMemoryUpdateWorker(pendingStore, taskStore, dailyRecordService, timelineEventService,
+                userMemoryService, dispatcher, limiter, redactor, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     // ── 저장 직후 큐 적재 ──
@@ -374,9 +386,7 @@ class UserMemoryUpdateWorkerTest {
         PrivacyRedactor failingRedactor = mock(PrivacyRedactor.class);
         when(failingRedactor.redactTree(any(JsonNode.class)))
                 .thenThrow(new RuntimeException("redactor down"));
-        UserMemoryUpdateWorker failingWorker = new UserMemoryUpdateWorker(pendingStore, taskStore,
-                dailyRecordService, timelineEventService, userMemoryService, dispatcher,
-                failingRedactor, Clock.fixed(NOW, ZoneOffset.UTC));
+        UserMemoryUpdateWorker failingWorker = newWorker(failingRedactor);
 
         failingWorker.dispatchPendingUpdates();
 
@@ -514,6 +524,70 @@ class UserMemoryUpdateWorkerTest {
         // guard 반납은 TTL에 맡긴다 — 같은 실행에서 다시 보내 봐야 같은 payload라 또 4xx다.
         verify(taskStore, never()).releaseGuard(any());
         // 계약 불일치처럼 우리 쪽 수정으로 풀리는 4xx가 있다 — 걷어내면 고친 뒤에도 그 날은 복구되지 않는다.
+        verify(pendingStore, never()).removeAll(any(), anyList());
+    }
+
+    @Test
+    void sessionPermitTimeoutDefersUserWithoutSavingTaskOrDispatching() {
+        // 세션 생성 한도(#515)를 TIMELINE과 나눠 쓴다 — 허가를 못 받으면 task 없이 날들이 큐에 남아 다음 실행이 보낸다.
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+        when(limiter.tryAcquire()).thenReturn(false);
+
+        worker.dispatchPendingUpdates();
+
+        verify(taskStore, never()).save(anyString(), any(), any());
+        verifyNoInteractions(dispatcher);
+        verify(pendingStore, never()).removeAll(any(), anyList());
+    }
+
+    @Test
+    void sessionPermitRedisFailureDefersUserWithoutSavingTaskOrDispatching() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+        when(limiter.tryAcquire()).thenThrow(new IllegalStateException("redis down"));
+
+        worker.dispatchPendingUpdates();
+
+        verify(taskStore, never()).save(anyString(), any(), any());
+        verifyNoInteractions(dispatcher);
+    }
+
+    @Test
+    void throttledDispatchIsRetriedWithSameRequestAndKeepsTask() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+        doThrow(new TimelineAiDispatchThrottledException("throttled", null))
+                .doNothing()
+                .when(dispatcher).dispatch(any());
+
+        worker.dispatchPendingUpdates();
+
+        // 같은 token의 같은 요청을 다시 보낸다 — 첫 요청은 접수되지 않았음이 확실하다.
+        ArgumentCaptor<AiUserMemoryUpdateRequest> sent = ArgumentCaptor.forClass(AiUserMemoryUpdateRequest.class);
+        verify(dispatcher, times(2)).dispatch(sent.capture());
+        assertThat(sent.getAllValues().get(1).taskToken()).isEqualTo(sent.getAllValues().get(0).taskToken());
+        verify(taskStore, never()).delete(anyString());
+    }
+
+    @Test
+    void throttleAfterAllRetriesIsHandledAsRejection() {
+        UserMemoryUpdatePending pending = pending(RECORD_ID);
+        stubPendingQueue(List.of(pending));
+        stubClaimable(pending);
+        when(userMemoryService.find(SUBJECT_ID)).thenReturn(Optional.empty());
+        doThrow(new TimelineAiDispatchThrottledException("throttled", null)).when(dispatcher).dispatch(any());
+
+        worker.dispatchPendingUpdates();
+
+        verify(dispatcher, times(1 + SessionCreationRateLimiter.THROTTLE_BACKOFFS.size())).dispatch(any());
+        verify(taskStore).delete(anyString());
         verify(pendingStore, never()).removeAll(any(), anyList());
     }
 

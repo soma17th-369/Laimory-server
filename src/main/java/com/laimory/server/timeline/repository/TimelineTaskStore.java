@@ -40,6 +40,8 @@ public class TimelineTaskStore {
     private static final String USER_PROCESSING_INDEX_KEY_SUFFIX = ":processing";
     private static final String INDEX_REPAIR_METRIC = "laimory.timeline.task.index.repair";
     private static final String USER_INDEX = "user";
+    /** 대기열 접수 처리권(#515) — {@code timeline:draft-task:dispatch-claim:{taskId}}, 값은 의미 없다. */
+    private static final String DISPATCH_CLAIM_KEY_PREFIX = "timeline:draft-task:dispatch-claim:";
     private final RedisGateway redis;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
@@ -62,6 +64,14 @@ public class TimelineTaskStore {
         } else {
             removeProcessingIndexes(taskId, task.subjectId());
         }
+    }
+
+    public boolean claimQueuedDispatch(String taskId, Duration ttl) {
+        return redis.setIfAbsent(DISPATCH_CLAIM_KEY_PREFIX + taskId, "1", ttl);
+    }
+
+    public void releaseQueuedDispatchClaim(String taskId) {
+        redis.delete(DISPATCH_CLAIM_KEY_PREFIX + taskId);
     }
 
     public Optional<TimelineDraftTask> find(String taskId) {

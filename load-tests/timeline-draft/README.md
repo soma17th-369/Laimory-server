@@ -35,6 +35,7 @@ load-tests/timeline-draft/
 │   ├── generate-tokens.py          # user_id 목록 → access token(JWT HS256)
 │   ├── generate-subject-rows.py    # user_id 목록 → subject 행 SQL(mapping·설정)과 정리용 subject 집합
 │   ├── run-ladder.sh               # 단계 사다리 + 중단 gate
+│   ├── ai-dispatch-rate.py         # AI 접수 송신률 판정(#515 — 로그·simulator journal)
 │   ├── dev-recreate.sh             # .env 수정분 반영(컨테이너 재생성, dev host에서 실행)
 │   ├── verify-artifact-hygiene.sh  # artifact 격리·secret 누출 검증
 │   └── verify-redis-residue.sh     # Redis 잔여 확인
@@ -442,6 +443,120 @@ rm -f load-tests/timeline-draft/.artifacts/tokens.json \
       load-tests/timeline-draft/.artifacts/subject-set.sql
 load-tests/timeline-draft/scripts/verify-artifact-hygiene.sh
 ```
+
+## 접수 대기열 송신률 검증 (#515)
+
+TIMELINE AI 접수를 SQS 대기열 뒤로 보낸 상태(`APP_AI_DISPATCH_TIMELINE_ROUTE=queue`)에서 세 가지를 본다.
+
+- 서버를 떠난 접수가 **어느 1초 구간에도 25건을 넘지 않는다**(#515 AC2).
+- 한꺼번에 몰린 N건이 다 나가는 시간이 예상(평균 초당 20건)과 맞다.
+- 같은 task가 AI에 두 번 나가지 않는다.
+
+**AI 서버 없이 잰다(`APP_AI_MODE=noop`).** 세션 생성 limiter는 누구에게 보내는지(transport)보다 앞에 있으므로
+보내는 속도는 AI 종류와 무관하다. noop은 즉시 반환하므로 worker가 접수 직후 남기는 로그
+`timeline 대기열 접수 완료: taskId=…`의 시각이 곧 보낸 시각이다. 실제 AI(`agentcore`)로는 재지 않는다 — 호출마다
+비용이 들고, prod와 같은 계정의 초당 25건·활성 세션 2,500을 함께 쓴다. 동작 설명은
+[timeline-draft runtime](../../.agents/knowledge/codebase/runtime/timeline-draft.md) "접수 대기열 경로", env 값의
+의미는 [접수 대기열 runbook](../../docs/operations/ai-dispatch-queue.md)이 소유한다.
+
+### 준비 — AWS·host 변경은 사용자가 직접 수행한다
+
+1. test 배포에 이 기능이 들어 있다(`.env`의 `APP_COMMIT_SHA`로 확인).
+2. test 큐 `laimory-test-ai-dispatch-timeline`이 있다. Standard, visibility 60s, 보관 10분, 수신 대기 20s,
+   SSE-SQS이고 dead-letter 큐는 두지 않는다. test WAS role에는 runbook의 SQS 정책을 이 큐 이름으로 붙인다.
+3. test host `/home/ubuntu/app/.env`를 백업(`.env.before-515`)한 뒤 다음처럼 고치고 재생성한다.
+
+   ```text
+   APP_AI_MODE=noop
+   APP_AI_DISPATCH_QUEUE_TIMELINE_URL=https://sqs.ap-northeast-2.amazonaws.com/<계정 ID>/laimory-test-ai-dispatch-timeline
+   APP_AI_DISPATCH_WORKER_ENABLED=true
+   APP_AI_DISPATCH_TIMELINE_ROUTE=queue
+   ```
+
+   - `APP_AI_MODE`는 기존 줄(`http`)을 고친다. 같은 key가 두 줄이면 마지막 값이 쓰인다.
+   - `APP_AI_DISPATCH_LIMITER_PERMITS`는 넣지 않는다. 기본값 5(어느 1초 최대 25건)를 그대로 잰다.
+   - test는 WAS 1대이고 외부 유입이 없어 worker와 route를 한 번에 켜도 된다. 여러 대 환경의 켜는 순서는 runbook을 따른다.
+   - 재생성은 `sudo load-tests/timeline-draft/scripts/dev-recreate.sh`로 한다. 로그에
+     `AI 접수 대기열 worker 시작: slots=16`이 보여야 한다.
+4. 합성 사용자·subject·token을 위 1~4단계로 준비한다(회차 최대 VUS만큼).
+5. 분석 스크립트를 test host에 한 번 둔다. SSM 세션에서 저장소의 `scripts/ai-dispatch-rate.py` 내용을 붙여 넣는다
+   (Python 3.8 이상, 표준 라이브러리만 쓴다).
+
+   ```bash
+   cat > /tmp/ai-dispatch-rate.py <<'PY'
+   # load-tests/timeline-draft/scripts/ai-dispatch-rate.py 내용
+   PY
+   ```
+
+### 회차
+
+회차마다 `STEP_INDEX`를 바꾼다. 같은 사용자의 같은 날짜를 다시 쓰지 않기 위해서다.
+
+1. test host에서 회차 시작 시각을 적어 둔다. 판정이 이번 회차 로그만 읽게 하는 기준이다.
+
+   ```bash
+   START=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+   ```
+
+2. 실행기에서 발사한다.
+
+   ```bash
+   RUN_ID=20261123-01 BASE_URL=https://test.laimory.app VUS=300 STEP_INDEX=2 CONFIRM_AI_NOOP=yes \
+     k6 run load-tests/timeline-draft/k6/calendar-core.js
+   ```
+
+3. 다 나갈 때까지 약 `VUS ÷ 20 + 10`초 기다린다. SQS 콘솔에서 본 큐의 available·in flight가 0이 됐는지 본다.
+4. test host에서 판정한다. `--expected`에는 k6 결과에서 202를 받은 수를 넣는다.
+
+   ```bash
+   sudo docker logs --since "$START" laimory 2>&1 | python3 /tmp/ai-dispatch-rate.py - --expected 300
+   ```
+
+5. 같은 범위의 로그를 센다.
+
+   ```bash
+   for p in '대기열 접수 완료' '수신 실패' '세션 생성 허가' '대기 예산 초과' 'enqueue rejected' 'enqueue outcome unknown'; do
+     printf '%s: ' "$p"; sudo docker logs --since "$START" laimory 2>&1 | grep -c "$p"
+   done
+   ```
+
+   `대기열 접수 완료`는 VUS와 같고 나머지는 0이어야 한다.
+6. 다음 회차 전에 5분 쉰다. noop은 결과를 돌려주지 않으므로 task는 큐 경로 처리 기한(4분) 뒤 유실 처리가
+   FAILED·환불로 끝낸다. 그 정리가 다음 회차와 겹치지 않게 한다.
+
+| 회차 | VUS | 다 나가는 시간(예상) | 볼 것 |
+|---|---|---|---|
+| calibration | 1 | 바로 | 접수 1건, `대기열 접수 완료` 1건 |
+| 1 | 100 | 약 5초 | 어느 1초 최대 ≤ 25 |
+| 2 | 300 | 약 15초 | 어느 1초 최대 ≤ 25, 평균 약 20건/초 |
+| 3 | 1,000 | 약 50초 | 위와 같음. 접수 대기 예산(60초)에 가까운 경계라 `대기 예산 초과`가 나오면 그 수를 기록한다 |
+
+### 판정 기준
+
+| 항목 | 기준 | 출처 |
+|---|---|---|
+| 어느 1초 최대 접수 | 25 이하 | 분석 스크립트 |
+| 접수 수 | k6에서 202를 받은 수와 같음 | 분석 스크립트 `--expected` |
+| 중복 taskId | 0 | 분석 스크립트 |
+| 평균 송신률 | 약 20건/초(250ms 창마다 5건) | 분석 스크립트 |
+| 202 비율 | 99% 이상 | k6 `draft_accepted` |
+| 큐 잔여 | available·in flight 0 | SQS 콘솔 |
+| 오류 로그 | 5단계의 실패 문구 0 | test host 로그 |
+
+접수 수가 기대보다 적은데 큐 잔여가 0이고 실패 문구도 0이면 로그 유실이다. 앱 로그는 요청 스레드를 막지 않으려고
+큐가 차면 INFO를 버린다(`logback-spring.xml`의 AsyncAppender). 그 회차는 무효로 기록하고 다시 돈다.
+
+### 한계
+
+- test WAS는 1대다. 두 대 합산은 `SessionCreationRateLimiterIntegrationTest`(연결이 다른 limiter 2개)가 본다.
+- noop은 즉시 반환하므로 실제 AI 응답 지연에서 처리 slot(16)이 먼저 막히는지는 이 측정으로 보지 못한다.
+  가짜 AI 서버(#257 simulator)를 켜고 응답 지연을 바꾸면 볼 수 있고, 그때는 수신 기록을 `--journal`로 판정한다.
+- AgentCore throttle과 세션 cold start는 재현하지 않는다.
+
+### 정리
+
+- `.env`를 백업으로 되돌리고 재생성한다(`APP_AI_MODE=http`, 접수 경로 inline으로 복귀).
+- DB·Redis 정리는 9단계와 같다. 다만 큐 경로 task는 수명이 6분이라 Redis 잔여는 마지막 회차 7분 뒤에 본다.
 
 ## 환경변수
 

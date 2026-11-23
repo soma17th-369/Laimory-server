@@ -130,11 +130,7 @@ class TimelineDraftTaskServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TimelineDraftTaskService(
-                dailyRecordService, timelineTaskService, timelineDraftPreparationService,
-                timelineDraftSourceItemService, timelineEventService, timelineEventItemService, timelineItemService,
-                sourceItemEnrichmentService, timelineAiDispatcher,
-                privacyRedactor, creditService, timelineTaskLossTimerService, new ObjectMapper(), clock);
+        service = newService(privacyRedactor);
         // 기본 스텁: enrich pass-through(재구성 자체는 SourceItemEnrichmentServiceTest가 검증).
         // 검증 실패 테스트는 enrich까지 도달하지 않으므로 lenient.
         lenient().when(sourceItemEnrichmentService.enrich(anyList(), any()))
@@ -144,6 +140,21 @@ class TimelineDraftTaskServiceTest {
                 .thenReturn(RECORD_ID);
         // PROCESSING 도달 경로에서만 읽히는 시각 스텁 — 호출 횟수는 전용 테스트가 검증한다.
         lenient().when(clock.instant()).thenReturn(PROCESSING_STARTED_AT);
+    }
+
+    /**
+     * commit 뒤 단계(타이머·PROCESSING·접수·보상)는 #515에서 접수 경로로 분리됐다. 실물 inline 경로를 같은 mock 협력자로
+     * 조립하므로 이 클래스의 행동 검증(저장·보상·응답)은 분리 전과 같은 대상을 본다.
+     */
+    private TimelineDraftTaskService newService(PrivacyRedactor redactor) {
+        TimelineDispatchCompensation compensation = new TimelineDispatchCompensation(creditService,
+                timelineTaskLossTimerService, dailyRecordService, timelineTaskService, timelineDraftSourceItemService);
+        TimelineDispatchSubmitter inlineSubmitter = new InlineTimelineDispatchSubmitter(timelineTaskService,
+                timelineTaskLossTimerService, timelineAiDispatcher, compensation, clock);
+        return new TimelineDraftTaskService(
+                dailyRecordService, timelineDraftPreparationService, timelineEventService, timelineEventItemService,
+                timelineItemService, sourceItemEnrichmentService, inlineSubmitter, redactor, creditService,
+                new ObjectMapper(), clock);
     }
 
     private List<SourceItemDto> oneSource() {
@@ -791,11 +802,7 @@ class TimelineDraftTaskServiceTest {
         when(dailyRecordService.findBySubjectIdAndRecordDate(SUBJECT_ID, DATE)).thenReturn(Optional.empty());
         PrivacyRedactor failingRedactor = mock(PrivacyRedactor.class);
         when(failingRedactor.redactTree(any(), anySet())).thenThrow(new RuntimeException("redactor down"));
-        TimelineDraftTaskService failingService = new TimelineDraftTaskService(
-                dailyRecordService, timelineTaskService, timelineDraftPreparationService,
-                timelineDraftSourceItemService, timelineEventService, timelineEventItemService, timelineItemService,
-                sourceItemEnrichmentService, timelineAiDispatcher,
-                failingRedactor, creditService, timelineTaskLossTimerService, new ObjectMapper(), clock);
+        TimelineDraftTaskService failingService = newService(failingRedactor);
 
         assertThatThrownBy(() -> failingService.createDraftTask(
                 VERSION, SUBJECT_ID, DATE, RECORD_AT, ZONE, WINDOW, oneSource()))
