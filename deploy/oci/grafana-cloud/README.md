@@ -5,16 +5,17 @@ OCI 단일 호스트(api·ai·nginx·mysql)의 경보다. AWS의 `deploy/monitor
 
 ```text
 OCI host ── alloy(compose 서비스) ──remote_write──▶ Grafana Cloud(Prometheus) ──경보──▶ Discord
-   │  api:9090 actuator · ai:8080/health · 호스트 /proc·/sys · textfile(MySQL 백업)
+   │  api:9090 actuator · ai:8080/health · 호스트 /proc·/sys · textfile(MySQL 백업·Upstash 사용량·인증서 만료) · api ERROR 로그 줄 수
 Synthetic Monitoring(서울 probe) ──▶ https://api.laimory.app/readyz ─────────┘
 ```
 
 | 파일 | 내용 |
 |---|---|
 | `../alloy/config.alloy` | 수집 대상과 내보낼 지표 목록(keep 규칙) |
-| `alert-rules.json` | 경보 14개(규칙 원본) |
+| `alert-rules.json` | 경보 23개(규칙 원본) |
 | `notification.json` | Discord 메시지 템플릿·contact point 이름·알림 정책 |
 | `apply-alerting.py` | 위 JSON을 Grafana Cloud API로 적용·상태 조회(관리자 Mac에서 실행) |
+| `collectors/` | Upstash 월 명령 수·nginx가 내보내는 인증서 만료 수집 스크립트와 systemd timer(OCI host) |
 
 Grafana Cloud는 파일 provisioning을 지원하지 않는다. 규칙은 이 JSON이 원본이고 `apply-alerting.py apply`가
 덮어쓴다. API로 만든 규칙은 UI에서 편집이 잠기므로 JSON을 고쳐 다시 apply한다.
@@ -29,7 +30,7 @@ Free 계정만 쓴다. 공식 문서는 Free 가입에 카드가 필요 없다�
 | 결제 수단 | — | 없음 | 카드·결제 수단을 등록하지 않는다. Pro 업그레이드·체험 전환을 누르지 않는다 |
 | 지표 active series | 10,000 | 약 430 (HTTP histogram이 대부분) | `config.alloy`의 keep 규칙이 경보 식에 쓰는 지표 이름만 내보낸다 |
 | Synthetic API test | 월 100,000회 | 월 43,200회 | check 1개 × 서울 probe 1곳 × 1분. check·probe를 늘리거나 주기를 줄이지 않는다 |
-| 로그·trace·profile | 각각 | 0 | Alloy에 로그·trace 파이프라인이 없다. 다른 Cloud 기능을 켜지 않는다 |
+| 로그·trace·profile | 각각 | 0 | 로그는 Cloud로 보내지 않는다 — Alloy가 호스트에서 api ERROR 줄 수만 세어 counter로 보낸다. trace 없음. 다른 Cloud 기능을 켜지 않는다 |
 
 경보를 추가하면서 새 지표를 쓰면 keep 정규식에도 넣는다. 넣지 않은 지표는 Cloud에 없어서 그 규칙은
 NoData가 된다.
@@ -120,7 +121,7 @@ deploy/oci/grafana-cloud/apply-alerting.py apply
 deploy/oci/grafana-cloud/apply-alerting.py status
 ```
 
-`status`에서 14개 모두 `inactive`(Normal)이고 health가 `ok`여야 한다. `nodata`면 지표 이름·label이나 keep
+`status`에서 23개 모두 `inactive`(Normal)이고 health가 `ok`여야 한다. `nodata`면 지표 이름·label이나 keep
 규칙을, `error`면 식을 확인한다.
 
 ## 4. 발화·해소 시험
@@ -151,6 +152,21 @@ api·ai·nginx는 멈추지 않는다. prod MySQL은 건드리지 않는다.
 인증서는 OCI host의 `laimory-cert-renew.timer`가 하루 두 번 갱신하고 hook이 nginx용 사본을 만든다.
 14일 경보는 몇 주째 갱신이 실패했다는 뜻이다.
 
+### tls
+
+`laimory-oci-tls-expiry.timer`(1시간)가 `127.0.0.1:443`에 SNI(`laimory.app`, `api.laimory.app`)로 붙어 nginx가 **실제로 내보내는**
+인증서의 만료 시각을 textfile에 쓴다. 파일이 아니라 응답을 읽으므로 갱신은 됐는데 hook 복사나 nginx reload가 빠진 경우도 잡는다.
+위 Synthetic TLS 경보는 `api.laimory.app`만 본다(밖에서 본 값).
+
+```bash
+sudo install -m 0755 collectors/collect-tls-expiry.sh /usr/local/sbin/collect-tls-expiry
+sudo install -m 0644 collectors/laimory-oci-tls-expiry.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now laimory-oci-tls-expiry.timer
+```
+
+30일 경보가 오면 자동 갱신(만료 30일 전부터 시도)이 실패하고 있다는 뜻이다. `journalctl -u laimory-cert-renew`와
+`docker compose --profile tools run --rm certbot renew --dry-run`으로 원인을 본다.
+
 ### application
 
 AWS `deploy/monitoring`의 앱 경보와 같은 식·임계값이다(5xx 5%, p95 1초, heap 85%, Hikari 90%+대기).
@@ -161,8 +177,36 @@ AWS `deploy/monitoring`의 앱 경보와 같은 식·임계값이다(5xx 5%, p95
 swap이 없는 호스트다. 메모리 경보가 오면 `docker stats`로 컨테이너별 사용량을 본다. OOM 경보는 한 번만
 알린다(`notify_once`).
 
+### lifecycle
+
+AWS `deploy/monitoring`의 lifecycle 규칙과 같은 식·임계값이다(2026-11-23 AWS 관측 host 중지와 함께 옮김). api가 내보내는
+gauge(`laimory_credit_history_*`, `laimory_inquiry_unanswered`)를 쓴다.
+
+- 미정산 크레딧: CHARGED로 남은 `credit_histories` 행과 그 draft의 task 결과를 본다.
+- 미처리 문의: 매일 13:00 KST(UTC 4시 0~5분)에만 평가해 하루 한 번 알린다. 문의에 회신하고 처리됨으로 표시한다.
+- AI 실패: 최근 결말 난 생성 5건 중 3건 이상이 AI 실패 환불이면 한 번만 알린다(`notify_once`). ai 컨테이너 로그를 본다.
+
+### upstash
+
+Upstash 무료 플랜(월 50만 명령) 사용량이다. OCI host의 `laimory-oci-upstash-usage.timer`(5분)가 Developer API로 이번 달
+누적 명령 수를 textfile에 쓴다. Developer API 조회는 Redis 명령으로 세지 않는다.
+
+```bash
+sudo install -m 0755 collectors/collect-upstash-usage.sh /usr/local/sbin/collect-upstash-usage
+sudo install -m 0644 collectors/laimory-oci-upstash-usage.{service,timer} /etc/systemd/system/
+# /etc/laimory/upstash.env (0600): UPSTASH_REDIS_DATABASE_ID=<DB id>
+# /etc/laimory/upstash-api-credentials (root 0400): "<계정 email>:<read-only API key>" 한 줄 — 대화형으로 직접 입력
+sudo systemctl daemon-reload && sudo systemctl enable --now laimory-oci-upstash-usage.timer
+```
+
+수집 실패 경보가 오면 `journalctl -u laimory-oci-upstash-usage`로 key 만료·DB id를 확인한다.
+
+### logs
+
+Alloy가 호스트의 docker json-file 로그를 읽어 Spring 앱(`service=laimory`)의 `level=ERROR` 줄 수만 counter로 보낸다. 로그 내용은
+어디로도 나가지 않는다. 경보가 오면 `docker compose logs --since 10m api | grep '"level":"ERROR"'`. 로그 보존은 컨테이너 로그
+회전 설정(json-file `max-size`·`max-file`)만큼이다.
+
 ## 아직 OCI로 옮기지 않은 경보
 
-- lifecycle 3종(크레딧 미정산·미처리 문의·AI 실패): AWS WAS와 같은 prod DB를 세므로 지금 옮기면 같은 알림이
-  두 번 온다. `laimory.app`을 OCI로 전환할 때 AWS 쪽과 함께 옮긴다.
-- ERROR 로그 경보: OCI 로그는 ELK로 가지 않는다. 로그 저장소(Loki)를 둘 때 옮긴다.
+- AWS의 다른 경보(dev·test 환경, ELK·Filebeat 파이프라인)는 AWS 관측 host와 함께 멈춰 있다.
