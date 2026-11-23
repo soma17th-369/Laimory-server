@@ -30,14 +30,16 @@ import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
  * TIMELINE 접수 대기열(SQS)을 받아 세션 생성 한도 안에서 AI에 접수시키는 worker(#515,
  * {@code app.ai.dispatch.worker.enabled=true}).
  *
- * <p>메시지 하나의 순서: 처리권({@code SET NX}) → task가 {@code DISPATCH_PENDING}인지 → 접수 대기 예산 → 세션 생성 허가 →
- * 새 token으로 {@code INPUT_PENDING} 전이(접수 <b>전에</b> 쓴다) → 접수. 접수 전에 처리 단계를 바꾸므로 그 뒤의 재전달은
- * 단계 검사에서 중복으로 버려지고, 같은 task가 AI에 두 번 가지 않는다. 처리권 수명({@link #CLAIM_TTL})은 visibility(60s)
- * 보다 짧아, 처리권을 잡고 전이 전에 죽은 메시지는 재전달 때 다시 잡혀 접수된다.
+ * <p>메시지 하나의 순서: 처리권({@code SET NX}) → task가 {@code DISPATCH_PENDING}인지 → 접수 대기 예산 → 새 token으로
+ * {@code INPUT_PENDING} 전이(접수 <b>전에</b> 쓴다) → 세션 생성 허가 → 곧바로 접수. 접수 전에 처리 단계를 바꾸므로 그 뒤의
+ * 재전달은 단계 검사에서 중복으로 버려지고, 같은 task가 AI에 두 번 가지 않는다. 허가는 접수 바로 앞에서 받아 허가 시각과
+ * 실제 요청 시각을 같은 창에 둔다. 처리권 수명({@link #CLAIM_TTL})은 visibility(60s)보다 짧아, 처리권을 잡고 전이 전에
+ * 죽은 메시지는 재전달 때 다시 잡혀 접수된다.
  *
  * <p>결과 분류는 inline 경로와 같다 — 미접수 확정은 환불·FAILED({@code -1009}), UNKNOWN은 PROCESSING 유지(재전송 없음,
- * 유실 타이머가 종결). throttle은 같은 실행 안에서 재시도한다. 처리가 끝난 메시지(접수·종결·중복)는 지우고, 접수 전
- * 실패는 {@link #RETRY_LATER_DELAY} 뒤 다시 받는다. 해석할 수 없는 메시지는 연결된 task가 없어 다시 받아도 처리할 수
+ * 유실 타이머가 종결). throttle은 같은 실행 안에서 재시도한다. 전이 뒤 허가를 남은 접수 대기 예산 안에 못 받거나 limiter의
+ * Redis가 실패하면 접수하지 않았음이 확실하므로 미접수 확정과 같이 종결한다. 처리가 끝난 메시지(접수·종결·중복)는 지우고,
+ * 전이 전 실패는 {@link #RETRY_LATER_DELAY} 뒤 다시 받는다. 해석할 수 없는 메시지는 연결된 task가 없어 다시 받아도 처리할 수
  * 없으므로 ERROR 로그를 남기고 지운다. dead-letter 큐는 두지 않는다 — 메시지의 끝은 task 결과(접수·FAILED·만료)가
  * 정하고, 오래 기다린 요청은 접수 대기 예산이 FAILED·환불로 끝내 사용자가 다시 요청한다.
  *
@@ -280,11 +282,6 @@ public class TimelineDispatchQueueWorker implements SmartLifecycle {
                         pending.tokenHash());
                 return Outcome.DONE;
             }
-            if (!limiter.tryAcquire()) {
-                log.warn("timeline 세션 생성 허가 대기 초과(잠시 뒤 다시 받는다): taskId={}", taskId);
-                releaseClaimQuietly(taskId);
-                return Outcome.RETRY_LATER;
-            }
             taskToken = TaskTokens.generate();
             accepted = pending.withTokenAndStage(TaskTokens.hash(taskToken), ProcessStage.INPUT_PENDING);
             if (!timelineTaskService.saveProcessingIfPresent(taskId, accepted)) {
@@ -292,12 +289,32 @@ public class TimelineDispatchQueueWorker implements SmartLifecycle {
                 return Outcome.DONE;
             }
         } catch (RuntimeException e) {
-            // 접수 전 실패(Redis·역직렬화 오류) — 처리권을 풀고 잠시 뒤 다시 받는다. Redis가 돌아오면 task 결과대로
+            // 전이 전 실패(Redis·역직렬화 오류) — 처리권을 풀고 잠시 뒤 다시 받는다. Redis가 돌아오면 task 결과대로
             // 정리된다(예산 초과면 FAILED·환불, task가 만료됐으면 건너뛰고 삭제).
             log.warn("timeline 대기열 접수 준비 실패(잠시 뒤 다시 받는다): taskId={} receiveCount={} error={}",
                     taskId, receiveCount(received), e.toString());
             releaseClaimQuietly(taskId);
             return Outcome.RETRY_LATER;
+        }
+
+        // 세션 생성 허가는 전이 뒤, 접수 바로 앞에서 받는다. limiter는 허가를 준 시각의 창으로 세므로 허가와 실제 요청
+        // 사이에 다른 일(Redis 전이 등)이 끼면, 바쁠 때 그 지연만큼 요청이 다음 창으로 밀려 창당 상한을 넘는다(#515 test
+        // 부하에서 어느 1초 31~32건). 전이를 이미 썼으므로 허가를 못 받으면 메시지를 돌려보내지 않는다 — 재전달은 단계 검사에서
+        // 건너뛰어진다. 대신 남은 접수 대기 예산까지 기다리고, 그래도 못 받으면 접수하지 않았음이 확실하므로 여기서 종결한다.
+        Duration remaining = TimelineTaskService.DISPATCH_QUEUE_WAIT_BUDGET
+                .minus(Duration.between(accepted.processingStartedAt(), clock.instant()));
+        boolean permitted;
+        try {
+            permitted = limiter.tryAcquire(remaining.isNegative() ? Duration.ZERO : remaining);
+        } catch (RuntimeException e) {
+            log.warn("timeline 세션 생성 허가 확인 실패(접수하지 않고 종결): taskId={} error={}", taskId, e.toString());
+            compensation.closeNotAccepted(taskId, accepted.subjectId(), accepted.dailyRecordId(), accepted.tokenHash());
+            return Outcome.DONE;
+        }
+        if (!permitted) {
+            log.warn("timeline 접수 대기 예산 안에 세션 생성 허가를 받지 못함(접수하지 않고 종결): taskId={}", taskId);
+            compensation.closeNotAccepted(taskId, accepted.subjectId(), accepted.dailyRecordId(), accepted.tokenHash());
+            return Outcome.DONE;
         }
 
         AiTimelineDispatchRequest request =

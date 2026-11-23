@@ -61,6 +61,7 @@ public class SessionCreationRateLimiter {
         return tryAcquire(MAX_WAIT);
     }
 
+    /** 대기 상한을 호출부가 정한다(대기열 worker: 남은 접수 대기 예산). 0이면 한 번만 센다. */
     boolean tryAcquire(Duration maxWait) {
         long deadline = clock.millis() + maxWait.toMillis();
         while (true) {

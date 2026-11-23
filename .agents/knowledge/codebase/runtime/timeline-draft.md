@@ -115,13 +115,17 @@ draft POST·polling·서버간 입력/결과·callback·append·Event 조회·�
 - 적재 거절(SQS 4xx)만 502(`-1009`)이고 보상은 미접수 확정과 같다. 적재 여부 불명은 202이며, 실제로 적재되지 않았다면
   유실 타이머가 종결한다. AI 거절은 응답이 아니라 폴링 FAILED(`-1009`)로 보인다.
 - worker(`app.ai.dispatch.worker.enabled`)는 처리권(`timeline:draft-task:dispatch-claim:{taskId}`, `SET NX` 55s) →
-  task가 `DISPATCH_PENDING`인지 → 접수 대기 예산(60s, `processingStartedAt` 기준) → 세션 생성 허가 → 새 token으로
-  `INPUT_PENDING` 전이(`SET XX KEEPTTL`) → 접수 순서로 처리한다. 전이를 접수 **전에** 하므로 재전달은 단계 검사에서
-  버려지고 같은 task가 AI에 두 번 가지 않는다. 처리권 수명이 visibility(60s)보다 짧아, 처리권을 잡고 전이 전에 죽은
-  메시지는 재전달 때 다시 접수된다.
+  task가 `DISPATCH_PENDING`인지 → 접수 대기 예산(60s, `processingStartedAt` 기준) → 새 token으로 `INPUT_PENDING`
+  전이(`SET XX KEEPTTL`) → 세션 생성 허가 → 곧바로 접수 순서로 처리한다. 전이를 접수 **전에** 하므로 재전달은 단계
+  검사에서 버려지고 같은 task가 AI에 두 번 가지 않는다. 처리권 수명이 visibility(60s)보다 짧아, 처리권을 잡고 전이 전에
+  죽은 메시지는 재전달 때 다시 접수된다.
+- 허가를 접수 **바로 앞**에서 받는 이유: limiter는 허가를 준 시각의 창으로 센다. 허가와 실제 요청 사이에 Redis 전이가
+  끼면, 서버가 바쁠 때 그 지연만큼 요청이 다음 창으로 밀려 창당 상한을 넘는다(test 부하 100건에서 어느 1초 31~32건).
+  전이를 먼저 쓰므로 허가는 남은 접수 대기 예산까지 기다리고, 그래도 못 받거나 limiter의 Redis가 실패하면 접수하지
+  않았음이 확실하므로 미접수 확정과 같이 종결한다(메시지를 돌려보내면 재전달이 단계 검사에서 건너뛰어진다).
 - 예산 초과와 미접수 확정은 inline과 같은 보상(환불 `DISPATCH_REJECTED`·정리·FAILED `-1009`)이고, UNKNOWN은 재전송
   없이 PROCESSING을 유지한다. throttle은 같은 실행 안에서 1s·2s·4s(+jitter) 뒤 허가를 다시 받아 최대 3번 재시도한다.
-- 허가 대기 초과·Redis 오류처럼 접수 전에 실패하면 처리권을 풀고 5초 뒤 다시 받는다. 해석할 수 없는 메시지는 연결된
+- 처리권·task 조회·전이 단계의 Redis 오류처럼 전이 전에 실패하면 처리권을 풀고 5초 뒤 다시 받는다. 해석할 수 없는 메시지는 연결된
   task가 없으므로 ERROR 로그 뒤 삭제한다. dead-letter 큐는 두지 않는다 — 메시지의 끝은 task 결과(접수·FAILED·만료)가
   정하고, 오래 기다린 요청은 접수 대기 예산이 FAILED·환불로 끝내 사용자가 다시 요청한다.
 - 구버전 서버는 `DISPATCH_PENDING`을 역직렬화하지 못해 폴링·진행 목록·유실 처리가 500이 된다. 그래서 모든 인스턴스가

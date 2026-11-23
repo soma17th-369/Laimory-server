@@ -515,7 +515,7 @@ TIMELINE AI 접수를 SQS 대기열 뒤로 보낸 상태(`APP_AI_DISPATCH_TIMELI
 5. 같은 범위의 로그를 센다.
 
    ```bash
-   for p in '대기열 접수 완료' '수신 실패' '허가 대기 초과' '대기 예산 초과' 'enqueue rejected' 'enqueue outcome unknown'; do
+   for p in '대기열 접수 완료' '수신 실패' '세션 생성 허가' '대기 예산 초과' 'enqueue rejected' 'enqueue outcome unknown'; do
      printf '%s: ' "$p"; sudo docker logs --since "$START" laimory 2>&1 | grep -c "$p"
    done
    ```
