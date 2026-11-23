@@ -14,7 +14,7 @@ automation을 바꿀 때 읽는다.
 - `application.properties`, `application-docker.properties`
 - `logback-spring.xml`, `docker-compose.yml`
 - `.github/workflows/deploy.yml`
-- `deploy/monitoring/*`
+- `deploy/monitoring/*`, `deploy/oci/mysql/*`
 - live AWS, GitHub repository Variables/Secrets(instance 목록은 Secrets)와 host `.env`
 
 ## Current Matrix
@@ -24,13 +24,13 @@ automation을 바꿀 때 읽는다.
 | local | `docker` | Compose | default noop | default noop | default noop | default `fixture` | on | text | empty | none |
 | integration | `docker` | Compose | default noop; test spy/simulation | default noop | default noop | default `fixture` | on | text | empty | local task |
 | dev | default | dev MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | on | JSON, dev environment | `dev_` | `dev` push |
-| prod | default | prod MySQL + Upstash Redis(primary, shared Redis는 mirror) | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
+| prod | default | **OCI host** MySQL 컨테이너 + Upstash Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
 | test | default | **dev MySQL 공유** + shared Redis | `.env` `http`(kakao-simulator) | `.env` Kakao(**simulator base URL + dummy key**) | `.env` noop | `.env` `secretsmanager`(dev와 같은 secret — DB 공유라 같은 HMAC key 필수) | on | **수집 없음**(Filebeat 미설치, host `docker logs`만) | `test_` | `test` push |
 
 Flyway는 공통 설정에서 켜져 모든 환경의 앱 시작 시 실행한다. 앱 DataSource 계정(`DB_USERNAME`)은 DML만
 가지며, migration은 `.env`의 `SPRING_FLYWAY_USER`·`SPRING_FLYWAY_PASSWORD`(Spring relaxed binding으로
 `spring.flyway.user`/`password`)가 가리키는 전용 DDL 계정으로 실행한다 — 이 키가 빠지면 Flyway가 DML 계정으로
-돌아, 미적용 DDL migration이 있을 때 기동이 실패한다. 전용 계정은 WAS private IP별로 host가 고정돼 있어 WAS를 새로 만들면 grant도
+돌아, 미적용 DDL migration이 있을 때 기동이 실패한다. 전용 계정은 WAS 주소별로 host가 고정돼 있어(dev는 private IP, prod는 OCI MySQL이라 WAS Tailscale IP) WAS를 새로 만들면 grant도
 함께 만든다. 2026-10-15 실측: prod·dev 모두 이 구조다(test host는 정지 상태라 미확인). dev/test는 DB와 migration 이력을
 공유하므로 test 브랜치의 독자 SQL을 실행하지 않고 동일한 migration 집합을 사용한다.
 모든 환경에서 Hibernate `ddl-auto=validate`를 유지하며, 기존 DB 최초 baseline은 별도 명시 작업이다.
@@ -78,6 +78,13 @@ dev/prod 배포 계약은 `APP_ADMIN_PORT=8081` exact-one, dev DB를 공유하�
 forwarded header로 대체하지 않는다. `.env` 반영은 별도 승인된 host 변경과 container 재생성이 필요하다.
 현재 live 활성화 여부는 host `.env`가 권위이며 코드 존재만으로 활성화됐다고 판단하지 않는다.
 
+2026-11-23부터 prod는 OCI 단일 host다 — `laimory.app`(DNS-only A) → nginx(TLS·ModSecurity 탐지·요청 제한) → api 컨테이너,
+DB는 같은 host의 MySQL 컨테이너(AWS MySQL replica에서 승격), 스케줄러 6종도 OCI api에서(`SERVER_COUNT=1`) 돈다. AI는
+같은 host의 ai 컨테이너(http 모드)다. OCI의 compose·`.env`는 저장소에 없고 host가 소유한다(`deploy/oci/*` README가 절차 원본).
+AWS prod WAS 2대·mysql-01·관측 host는 중지(stop) 상태로 보관 중이고(폐기 예정), 아래 AWS prod 서술은 그 보관본 기준이다.
+`.github/workflows/deploy.yml`의 prod(`main`) 배포 대상은 아직 AWS WAS라 OCI 배포 경로가 없다(미구현) — OCI api 갱신은
+수동 이미지 빌드·교체다. migration도 그동안 WAS 기동 Flyway가 적용했으므로 OCI 쪽 경로가 생기기 전까지 없다.
+
 prod host 3대(mysql-01, was-01, was-02)는 OS 보안 패치를 unattended-upgrades로 자동 설치하지만,
 서비스를 자동으로 재시작하지 않는다. needrestart는 목록만 표시하도록(`'l'`) 설정했고, mysql-01은 `mysql-`
 패키지를 자동 갱신에서 제외했다. 재시작은 계획된 시간에 사람이 한다. prod DB는 단일 인스턴스라
@@ -86,7 +93,8 @@ prod host 3대(mysql-01, was-01, was-02)는 OS 보안 패치를 unattended-upgra
 
 monitoring 자산은 별도 private host에서 실행된다. monitoring host가 dev WAS management 9090,
 dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나가는 source-limited
-경로를 갖고, 여기에 **prod MySQL 3306**이 더해진다(#358 binlog 오프호스트 스트리밍).
+경로를 갖고, 여기에 **AWS prod MySQL 3306**이 더해진다(#358 binlog 오프호스트 스트리밍). 승격 뒤 AWS MySQL은
+읽기 전용이라 이 스트림에 새 변경이 없고, prod 백업 권위는 OCI의 R2 백업이다.
 
 그 prod 경로는 성격이 다르므로 따로 다룬다 — monitoring host는 지표만 긁어오는 것이 아니라
 **prod DB의 모든 row 변경을 스풀에 상시 보관**하게 된다. 계정은 전역 `REPLICATION SLAVE`·
@@ -94,6 +102,9 @@ dev host node 9100, dev MySQL 3306, shared Redis 6379와 dev ELK 9200으로 나�
 제한하지만, 결과적으로 **이 host의 접근 통제 등급은 prod DB와 같아진다.** 루트 볼륨 EBS 암호화와
 스풀 0700이 전제이며, 관측 host 접근 통제(#368)와 함께 평가한다. rollback은 prod MySQL SG의
 3306 규칙 1건 삭제다.
+
+아래 DataGrip 경로와 `laimory_ops` 계정은 AWS MySQL 기준이다. 승격 뒤 OCI MySQL에는 운영자 원격 계정이 없고
+(미구현), 수동 조회는 OCI host에서 mysql 컨테이너 root로 한다.
 
 운영자의 prod DB 수동 조회·DML(DataGrip)은 **prod WAS를 경유하는 SSM
 `AWS-StartPortForwardingSessionToRemoteHost` 포트포워딩**으로만 한다(로컬 포트 규약 13306). prod WAS SG가
@@ -136,6 +147,12 @@ application 배포·health gate 의존성이 아니다.
 - AgentCore mode 전용(`app.ai.mode=agentcore`에서만 소비·기동 시 형식·리전 검증):
   `APP_AI_AGENTCORE_RUNTIME_ARN`, `APP_AI_AGENTCORE_ENDPOINT`(자격증명은 SDK 기본 체인 —
   access key property를 추가하지 않는다)
+- AI 접수 대기열(#515, 전부 선택·기본은 현행 동작): `APP_AI_DISPATCH_TIMELINE_ROUTE`(`inline` 기본 | `queue`),
+  `APP_AI_DISPATCH_QUEUE_TIMELINE_URL`(route=queue 또는 worker 사용 시 필수 — SQS URL 형식·`aws.region` 일치를 기동
+  시 검증), `APP_AI_DISPATCH_WORKER_ENABLED`(기본 false), `APP_AI_DISPATCH_WORKER_SLOTS`(기본 16),
+  `APP_AI_DISPATCH_LIMITER_PERMITS`(250ms 창당 세션 생성 허가, 기본 5 — 같은 AWS 계정을 쓰는 환경끼리 나눠 정한다).
+  deploy preflight는 아직 이 key들을 검사하지 않는다 — 잘못된 값은 앱 기동 검증이 막는다. 값·순서·확인 절차는
+  [AI 접수 대기열 runbook](../../../../docs/operations/ai-dispatch-queue.md)이 소유한다.
 - Kakao 전용 HTTP 자원 경계(`app.geo.http.*`·`app.geo.retry.*`·`app.geo.circuit.*` — 같은 이름의
   upper-snake env가 override, kakao mode에서만 소비·기동 시 교차 validation):
   `APP_GEO_HTTP_POOL_MAX_CONNECTIONS`, `APP_GEO_HTTP_POOL_PENDING_ACQUIRE_MAX_COUNT`,

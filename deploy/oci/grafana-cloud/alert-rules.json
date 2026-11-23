@@ -9,38 +9,6 @@
       "name": "laimory-oci-mysql",
       "rules": [
         {
-          "uid": "laimory_oci_replica_stopped",
-          "title": "OCI MySQL replica stopped",
-          "expr": "(1 - min by (environment, host) (laimory_oci_mysql_replica_running{environment=\"prod\",host=\"oci-prod\"})) + ((time() - max by (environment, host) (laimory_oci_mysql_replica_last_collect_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"})) > bool 300)",
-          "op": "gt",
-          "threshold": 0,
-          "for": "5m",
-          "noDataState": "Alerting",
-          "labels": {
-            "service": "laimory",
-            "severity": "critical"
-          },
-          "summary": "OCI MySQL replica IO or SQL thread is not running, or the replica status collector has stopped.",
-          "description": "Run SHOW REPLICA STATUS in the OCI mysql container (Last_IO_Error, Last_SQL_Error) and check laimory-oci-mysql-replica-status.timer. A disconnected IO thread retries on its own; this fires only after 5 minutes.",
-          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#mysql-replica"
-        },
-        {
-          "uid": "laimory_oci_replica_lag",
-          "title": "OCI MySQL replica lag high",
-          "expr": "max by (environment, host) (laimory_oci_mysql_replica_seconds_behind{environment=\"prod\",host=\"oci-prod\"})",
-          "op": "gt",
-          "threshold": 300,
-          "for": "10m",
-          "noDataState": "Alerting",
-          "labels": {
-            "service": "laimory",
-            "severity": "warning"
-          },
-          "summary": "OCI MySQL replica is more than 5 minutes behind prod.",
-          "description": "Check the Tailscale path to prod MySQL and the replica SQL thread. -1 (unknown) does not trigger this rule; a stopped thread is covered by the replica stopped rule.",
-          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#mysql-replica"
-        },
-        {
           "uid": "laimory_oci_mysqldump_stale",
           "title": "OCI MySQL dump backup stale",
           "expr": "time() - max by (environment, host) (laimory_oci_mysqldump_last_success_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"})",
@@ -279,6 +247,171 @@
           "summary": "The kernel OOM killer terminated a process on the OCI host.",
           "description": "Find the killed process in the kernel log (journalctl -k) and check which container restarted.",
           "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#host"
+        }
+      ]
+    },
+    {
+      "name": "laimory-oci-lifecycle",
+      "rules": [
+        {
+          "uid": "laimory_oci_credit_stale_charged",
+          "title": "Credit charge left unsettled",
+          "expr": "max by (environment, host) (laimory_credit_history_charged_stale{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\"})",
+          "op": "gt",
+          "threshold": 0,
+          "for": "0s",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "A timeline credit charge has stayed CHARGED past the settlement window.",
+          "description": "Inspect credit_histories rows still CHARGED and the timeline task outcome for those drafts.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#lifecycle"
+        },
+        {
+          "uid": "laimory_oci_inquiry_unanswered_daily",
+          "title": "Daily unanswered inquiry check (13:00 KST)",
+          "expr": "max by (environment, host) (laimory_inquiry_unanswered{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\"}) > 0 and on() hour() == 4 and on() minute() < 5",
+          "op": "gt",
+          "threshold": 0,
+          "for": "0s",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "There are inquiries without answered_at.",
+          "description": "Reply to the open inquiries and mark them answered. Fires once a day at 13:00 KST while any remain.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#lifecycle"
+        },
+        {
+          "uid": "laimory_oci_ai_failure_recent",
+          "title": "Recent timeline AI failures",
+          "expr": "max by (environment, host) (laimory_credit_history_recent_ai_failed{job=\"spring_boot\",environment=\"prod\",host=\"oci-prod\"})",
+          "op": "gt",
+          "threshold": 2,
+          "for": "0s",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning",
+            "notify_once": "true"
+          },
+          "summary": "3 or more of the 5 most recent settled timeline creations were refunded as AI failures.",
+          "description": "Counts AI_FAILED, TIMEOUT and DISPATCH_REJECTED refunds. Check the ai container logs and the AI provider. Notified once; resolves when successes bring it below 3.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#lifecycle"
+        }
+      ]
+    },
+    {
+      "name": "laimory-oci-upstash",
+      "rules": [
+        {
+          "uid": "laimory_oci_upstash_usage_high",
+          "title": "Upstash monthly usage high",
+          "expr": "max by (environment, host) (laimory_upstash_monthly_requests{job=\"node\",environment=\"prod\",host=\"oci-prod\"}) / 500000",
+          "op": "gt",
+          "threshold": 0.7,
+          "for": "10m",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "Upstash Redis has used over 70% of the free plan's 500k monthly commands.",
+          "description": "Check which keys/commands grew (Upstash console) before the free limit is reached.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#upstash"
+        },
+        {
+          "uid": "laimory_oci_upstash_collection_unhealthy",
+          "title": "Upstash usage collection unhealthy",
+          "expr": "(1 - max by (environment, host) (laimory_upstash_up{job=\"node\",environment=\"prod\",host=\"oci-prod\"})) + ((time() - max by (environment, host) (laimory_upstash_last_attempt_unixtime_seconds{job=\"node\",environment=\"prod\",host=\"oci-prod\"})) > bool 1800)",
+          "op": "gt",
+          "threshold": 0,
+          "for": "15m",
+          "noDataState": "Alerting",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "The Upstash usage collector failed or stopped, so the usage alert cannot fire.",
+          "description": "journalctl -u laimory-oci-upstash-usage on the OCI host; check the read-only API key and database id.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#upstash"
+        }
+      ]
+    },
+    {
+      "name": "laimory-oci-logs",
+      "rules": [
+        {
+          "uid": "laimory_oci_app_error_log",
+          "title": "Application ERROR log detected",
+          "expr": "sum by (environment, host) (increase(loki_process_custom_laimory_app_error_logs_total{environment=\"prod\",host=\"oci-prod\"}[5m]))",
+          "op": "gt",
+          "threshold": 0,
+          "for": "0s",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "The api container logged ERROR lines in the last 5 minutes.",
+          "description": "docker compose logs --since 10m api | grep '\"level\":\"ERROR\"' on the OCI host.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#logs"
+        }
+      ]
+    },
+    {
+      "name": "laimory-oci-tls-served",
+      "rules": [
+        {
+          "uid": "laimory_oci_tls_served_expiry_30d",
+          "title": "Served TLS certificate expires within 30 days",
+          "expr": "min by (environment, host, name) (laimory_oci_tls_cert_expiry_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"}) - time()",
+          "op": "lt",
+          "threshold": 2592000,
+          "for": "1h",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "A certificate nginx serves (laimory.app or api.laimory.app) expires within 30 days.",
+          "description": "Auto renewal should have replaced it ~30 days before expiry. Check laimory-cert-renew.timer logs, the webroot ACME path and the deploy hook copy.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#tls"
+        },
+        {
+          "uid": "laimory_oci_tls_served_expiry_14d",
+          "title": "Served TLS certificate expires within 14 days",
+          "expr": "min by (environment, host, name) (laimory_oci_tls_cert_expiry_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"}) - time()",
+          "op": "lt",
+          "threshold": 1209600,
+          "for": "1h",
+          "noDataState": "OK",
+          "labels": {
+            "service": "laimory",
+            "severity": "critical"
+          },
+          "summary": "A certificate nginx serves expires within 14 days — renewal has been failing for weeks.",
+          "description": "Renew manually (docker compose --profile tools run --rm certbot renew) and reload nginx.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#tls"
+        },
+        {
+          "uid": "laimory_oci_tls_collection_unhealthy",
+          "title": "TLS expiry collection unhealthy",
+          "expr": "((time() - max by (environment, host) (laimory_oci_tls_last_collect_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"})) > bool 7200) + (2 - count by (environment, host) (laimory_oci_tls_cert_expiry_unixtime_seconds{environment=\"prod\",host=\"oci-prod\"}))",
+          "op": "gt",
+          "threshold": 0,
+          "for": "15m",
+          "noDataState": "Alerting",
+          "labels": {
+            "service": "laimory",
+            "severity": "warning"
+          },
+          "summary": "The served-certificate expiry collector stopped or could not read both certificates, so expiry alerts cannot fire.",
+          "description": "journalctl -u laimory-oci-tls-expiry on the OCI host; check that nginx answers on 443 for both names.",
+          "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#tls"
         }
       ]
     }

@@ -40,7 +40,8 @@ Android 앱이 사용하는 Laimory REST 백엔드의 기술 구성과 기능 �
 
 외부 연동은 Google/Kakao OIDC, Kakao Maps, S3, CloudFront, Secrets Manager(배포 모드에서 기동 시
 subject HMAC key 1회 로드), MySQL, Redis다.
-AI dispatcher는 현재 `noop`과 dev/test용 `fake`만 존재한다.
+AI dispatcher는 `noop`·dev/test용 `fake`·`http`·`agentcore`(Bedrock AgentCore Runtime)이고, TIMELINE 접수는 선택적으로
+SQS Standard 접수 대기열을 거친다(#515 — `app.ai.dispatch.timeline.route=queue`).
 
 dev 배포는 `dev` push에서 GitHub Actions가 ECR image를 만들고 SSM으로 EC2에 배포한다.
 저장소는 전체 AWS topology나 신규 host 초기화를 정의하지 않으며, live AWS와 host 상태가 권위다.

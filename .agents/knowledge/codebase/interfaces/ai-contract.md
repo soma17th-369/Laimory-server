@@ -77,11 +77,32 @@ Content-Type: application/json
 - 실패 분류는 §1과 같은 두 갈래다. **미접수 확정**: 전송 전 자체 검증 실패(session id·직렬화), service의
   pre-invocation 4xx(Validation·AccessDenied·ResourceNotFound·Throttling·ServiceQuotaExceeded), AI
   runtime의 4xx ack. **UNKNOWN**: RetryableConflict·RuntimeClientError·5xx·timeout·전송 실패·ack 계약 불일치.
+  용량 한도 거절(Throttling·Throttled·ServiceQuotaExceeded)은 미접수 확정의 하위 분류
+  `TimelineAiDispatchThrottledException`이다(#515). inline draft 접수는 거절과 같이 처리하고, 접수 대기열 worker와
+  User Memory 배치는 같은 token으로 1s·2s·4s(+jitter) 뒤 세션 생성 허가를 다시 받아 최대 3번 재시도한다.
+- 세션 생성 limiter(#515): 접수 1건이 새 session 1개라(`prefix + taskId`) TIMELINE 대기열 worker와 User Memory 배치는
+  접수 전에 Redis 250ms 창 카운터의 허가를 받는다(창당 `APP_AI_DISPATCH_LIMITER_PERMITS`, 어느 1초든 최대 5배).
+  limiter는 허가를 준 창을 세고 AgentCore는 도착 시각을 세므로, 허가는 접수 바로 앞에서 받고 `INCR` 응답을 받은 시각이
+  다른 창이면(스레드 멈춤) 그 허가는 버리고 지금 창에서 다시 센다.
+  inline draft 접수는 허가를 받지 않는다 — 합산 한도 보장은 TIMELINE `route=queue`일 때만 성립한다.
 - 접수 대기 상한은 흐름별로 dispatcher가 요청마다 건다(#600 — client 하나를 공유하므로 client 기본값은 없다):
   timeline `apiCallAttemptTimeout` 5s·`apiCallTimeout` 7s(사용자 요청 스레드, 앱 draft POST 상한 10초 안),
   User Memory 15s·20s(배치 스레드, 새 session cold start 흡수). 둘 다 각 처리 기한(3분)의 절반보다 짧아야 기동한다. **SDK 자동 재시도는 꺼둔다** — 접수는 멱등이 아니라 재전송이 같은 taskId 이중 접수를 만든다.
 - 이 transport의 인증은 IAM이다(runtime role의 `bedrock-agentcore:InvokeAgentRuntime`, 대상 Runtime 한정).
   §1의 "AI endpoint 무인증" 한계는 HTTP mode에만 해당한다.
+
+### 1b. TIMELINE 접수 대기열 (`app.ai.dispatch.timeline.route=queue`, #515)
+
+- 접수 경로는 transport(`app.ai.mode`)와 독립이다. `queue`면 draft POST가 SQS Standard 대기열에
+  `{"requestType":"TIMELINE","taskId","dailyRecordId","window":{"startAt","endAt"}}`만 적재하고(token·원문 없음),
+  worker가 접수 직전에 token을 만들어 §1 body로 같은 dispatcher를 호출한다. AI가 받는 요청은 inline과 같다.
+- SQS 호출은 SDK 기본 재시도를 유지한다(중복 적재는 worker의 처리권·처리 단계 검사가 버린다). 적재는 요청 스레드라
+  시도 2s·전체 5s 상한이고, 수신은 20s long polling이다. 적재 4xx만 미적재 확정이다.
+- 자격증명은 SDK 기본 체인(EC2 인스턴스 프로파일)이다. 본 큐에 `sqs:SendMessage`·`ReceiveMessage`·`DeleteMessage`·
+  `ChangeMessageVisibility`·`GetQueueAttributes`가 필요하다.
+- 큐 설정 visibility 60s는 코드 값과 맞물린다 — 처리권 TTL 55s가 visibility보다 짧다는 전제다. 보관 기간은 10분(task
+  수명 6분보다 길게)이고 dead-letter 큐는 두지 않는다. 해석할 수 없는 메시지는 ERROR 로그 뒤 삭제한다.
+  처리 순서·보상은 [timeline-draft](../runtime/timeline-draft.md) "접수 대기열 경로"가 소유한다.
 
 ### 2. 회전 Task Token과 Redis Process Stage
 
@@ -109,7 +130,7 @@ INPUT_PENDING
   task에 Lua script는 없다. `XX`는 key 존재만 보고 값을 비교하지 않으므로 잘못된 요청 차단은 write 전
   token/status/stage 검증이 담당하고, missing task는 write에 실패해(404) 만료 task를 부활시키지 않는다.
   `KEEPTTL`이라 어떤 stage write도 최초 PROCESSING 저장이 정한 만료 시각(5분)을 연장하지 않는다. 이 계약은 통제된
-  단일·순차 AI writer의 timeout 재시도(첫 재시도 약 3.5초 뒤)를 보장 대상으로 하며, 같은 task/token
+  단일·순차 AI writer의 timeout 재시도(AI 기본값 기준 첫 재시도 약 3.5초 뒤, prod는 약 10.5초 뒤 — 4절)를 보장 대상으로 하며, 같은 task/token
   요청 둘을 첫 state write 전에 실제 동시 실행하는 경우는 last-write-wins로 수용한다. processing
   index는 보조 데이터로 최초 PROCESSING 생성과 terminal 전이에서만 갱신하고, 실패는 같은 의도의 명령을
   한 번 재시도한다.
@@ -271,6 +292,9 @@ clamp한다.
 최초 시작 기준으로 고정된 PROCESSING TTL과 마찬가지로 재발급으로 미끄러지지 않는다. AI 재시도 예산
 (시도당 timeout 3s·첫 backoff 0.5s·최대 3회 — 첫 재시도 약 3.5초 뒤, 실패 확정 약 10.5초)보다 크고
 처리 기한(3분)보다 작아야 한다 — AI의 read timeout이 12초를 넘으면 그만큼 늘린다.
+2026-11-23 현재 prod AgentCore와 OCI ai는 `APP_SERVER_TIMEOUT_SEC=10`이다(WAS·OCI api ↔ DB 왕복 약 40ms ×
+결과 저장 행별 INSERT로 저장이 3초를 넘기 때문). 첫 재시도(약 10.5초 뒤)는 창 안이지만 세 번째 시도(약 21.5초 뒤)와
+실패 확정(약 31.5초)은 15초 창 밖이다 — 서버 응답이 두 번 연속 10초를 넘는 경우에만 해당한다.
 
 ### 5. 상태 Callback (AI → API)
 

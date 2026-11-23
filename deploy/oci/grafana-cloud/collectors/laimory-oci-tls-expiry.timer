@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect served TLS certificate expiry every hour
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=1h
+RandomizedDelaySec=2m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

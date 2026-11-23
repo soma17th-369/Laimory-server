@@ -1,0 +1,17 @@
+[Unit]
+Description=Laimory OCI Upstash monthly usage metric collector
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/laimory/upstash.env
+ExecCondition=/usr/bin/test -s /etc/laimory/upstash-api-credentials
+ExecStart=/usr/local/sbin/collect-upstash-usage
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/laimory
+ReadWritePaths=/var/lib/laimory/textfile

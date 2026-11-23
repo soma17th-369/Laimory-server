@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laimory.server.agentcore.AgentCoreDispatchRequest;
 import com.laimory.server.timeline.dto.AiTimelineDispatchResponse;
 import com.laimory.server.timeline.service.TimelineAiDispatchRejectedException;
+import com.laimory.server.timeline.service.TimelineAiDispatchThrottledException;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
@@ -23,6 +24,9 @@ import software.amazon.awssdk.services.bedrockagentcore.model.InvokeAgentRuntime
 import software.amazon.awssdk.services.bedrockagentcore.model.RetryableConflictException;
 import software.amazon.awssdk.services.bedrockagentcore.model.RuntimeClientErrorException;
 import software.amazon.awssdk.services.bedrockagentcore.model.ServiceException;
+import software.amazon.awssdk.services.bedrockagentcore.model.ServiceQuotaExceededException;
+import software.amazon.awssdk.services.bedrockagentcore.model.ThrottledException;
+import software.amazon.awssdk.services.bedrockagentcore.model.ThrottlingException;
 
 /**
  * AgentCore 접수 공통 adapter({@code app.ai.mode=agentcore} — #338). Timeline·User Memory 두 dispatcher가
@@ -70,6 +74,10 @@ public class AgentCoreDispatchClient {
     private static final List<Class<? extends AwsServiceException>> UNKNOWN_OUTCOME_EXCEPTIONS = List.of(
             RetryableConflictException.class, RuntimeClientErrorException.class, ConflictException.class,
             InternalServerException.class, ServiceException.class);
+
+    /** 용량 한도 거절 — 미접수 확정의 하위 분류({@link TimelineAiDispatchThrottledException})로 던진다(#515). */
+    private static final List<Class<? extends AwsServiceException>> THROTTLED_EXCEPTIONS = List.of(
+            ThrottlingException.class, ThrottledException.class, ServiceQuotaExceededException.class);
 
     private final BedrockAgentCoreClient client;
     private final AgentCoreProperties properties;
@@ -137,6 +145,12 @@ public class AgentCoreDispatchClient {
             return e;
         }
         int statusCode = e.statusCode();
+        if (THROTTLED_EXCEPTIONS.stream().anyMatch(type -> type.isInstance(e))) {
+            // 용량 한도(세션 생성률·quota)로 runtime 호출 전에 거절했다 — 미접수 확정이되, 잠시 뒤 다시 보낼 수 있다(#515).
+            return new TimelineAiDispatchThrottledException(
+                    "AgentCore가 용량 한도로 접수를 거절했습니다(%d %s): taskId=%s"
+                            .formatted(statusCode, e.getClass().getSimpleName(), taskId), e);
+        }
         if (statusCode >= 400 && statusCode < 500) {
             // 서비스가 runtime 호출 전에 거절했다(요청 검증·권한·대상 부재·throttling) → 접수 없음이 확정.
             return new TimelineAiDispatchRejectedException(

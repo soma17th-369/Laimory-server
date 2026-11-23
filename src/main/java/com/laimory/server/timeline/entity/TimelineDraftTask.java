@@ -151,6 +151,17 @@ public record TimelineDraftTask(
     }
 
     /**
+     * 접수 대기열에 적재한 PROCESSING task({@link ProcessStage#DISPATCH_PENDING}, #515). {@code placeholderTokenHash}는
+     * 원문을 아무에게도 주지 않은 token의 hash다 — worker가 접수 직전 새 token으로 바꾸기 전까지 어떤 서버간 요청도
+     * 통과하지 못하고, 접수 전에 FAILED로 종결할 때도 그대로 보존된다.
+     */
+    public static TimelineDraftTask dispatchPending(UUID subjectId, long dailyRecordId, TimelineWindow timelineWindow,
+                                                    String placeholderTokenHash, Instant processingStartedAt) {
+        return new TimelineDraftTask(TaskStatus.PROCESSING, dailyRecordId, timelineWindow, null,
+                placeholderTokenHash, ProcessStage.DISPATCH_PENDING, processingStartedAt, subjectId, null);
+    }
+
+    /**
      * token과 stage를 바꾼 사본. {@code retryReceipt}는 <b>보존한다</b> — 재시도 재발급이 같은 stage에서
      * token만 다시 돌리기 때문이다. receipt를 든 채 허용되지 않는 stage로 나가는 조합은 compact
      * constructor가 거절하므로 보존이 위험을 만들지 않는다.
