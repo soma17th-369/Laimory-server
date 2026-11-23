@@ -24,7 +24,7 @@ automation을 바꿀 때 읽는다.
 | local | `docker` | Compose | default noop | default noop | default noop | default `fixture` | on | text | empty | none |
 | integration | `docker` | Compose | default noop; test spy/simulation | default noop | default noop | default `fixture` | on | text | empty | local task |
 | dev | default | dev MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | on | JSON, dev environment | `dev_` | `dev` push |
-| prod | default | **OCI MySQL**(primary, WAS는 Tailscale 경유) + Upstash Redis(primary, shared Redis는 mirror) | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
+| prod | default | **OCI host** MySQL 컨테이너 + Upstash Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push |
 | test | default | **dev MySQL 공유** + shared Redis | `.env` `http`(kakao-simulator) | `.env` Kakao(**simulator base URL + dummy key**) | `.env` noop | `.env` `secretsmanager`(dev와 같은 secret — DB 공유라 같은 HMAC key 필수) | on | **수집 없음**(Filebeat 미설치, host `docker logs`만) | `test_` | `test` push |
 
 Flyway는 공통 설정에서 켜져 모든 환경의 앱 시작 시 실행한다. 앱 DataSource 계정(`DB_USERNAME`)은 DML만
@@ -78,10 +78,12 @@ dev/prod 배포 계약은 `APP_ADMIN_PORT=8081` exact-one, dev DB를 공유하�
 forwarded header로 대체하지 않는다. `.env` 반영은 별도 승인된 host 변경과 container 재생성이 필요하다.
 현재 live 활성화 여부는 host `.env`가 권위이며 코드 존재만으로 활성화됐다고 판단하지 않는다.
 
-prod DB는 2026-11-23부터 OCI host의 MySQL 컨테이너다(AWS MySQL replica에서 승격, `laimory.app`과 WAS는 아직 AWS).
-WAS 2대가 Tailscale(`tag:aws-was`, ACL은 OCI `tcp:3306`만)로 OCI 3306에 붙으며 쿼리마다 약 40ms가 더해진다.
-계정·SNAT 조건·백업은 `deploy/oci/mysql/README.md`가 소유한다. AWS mysql-01은 읽기 전용(`super_read_only`)으로
-보관만 하고 앱이 붙지 않는다(폐기 예정).
+2026-11-23부터 prod는 OCI 단일 host다 — `laimory.app`(DNS-only A) → nginx(TLS·ModSecurity 탐지·요청 제한) → api 컨테이너,
+DB는 같은 host의 MySQL 컨테이너(AWS MySQL replica에서 승격), 스케줄러 6종도 OCI api에서(`SERVER_COUNT=1`) 돈다. AI는
+같은 host의 ai 컨테이너(http 모드)다. OCI의 compose·`.env`는 저장소에 없고 host가 소유한다(`deploy/oci/*` README가 절차 원본).
+AWS prod WAS 2대·mysql-01·관측 host는 중지(stop) 상태로 보관 중이고(폐기 예정), 아래 AWS prod 서술은 그 보관본 기준이다.
+`.github/workflows/deploy.yml`의 prod(`main`) 배포 대상은 아직 AWS WAS라 OCI 배포 경로가 없다(미구현) — OCI api 갱신은
+수동 이미지 빌드·교체다. migration도 그동안 WAS 기동 Flyway가 적용했으므로 OCI 쪽 경로가 생기기 전까지 없다.
 
 prod host 3대(mysql-01, was-01, was-02)는 OS 보안 패치를 unattended-upgrades로 자동 설치하지만,
 서비스를 자동으로 재시작하지 않는다. needrestart는 목록만 표시하도록(`'l'`) 설정했고, mysql-01은 `mysql-`

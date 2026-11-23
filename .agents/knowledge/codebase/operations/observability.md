@@ -433,7 +433,7 @@ rollback에서도 해당 target을 제거하지 않는다.
 ## OCI prod 경보 (Grafana Cloud Free)
 
 AWS `deploy/monitoring` 스택은 OCI host(api·ai·nginx·mysql 단일 host)로 가는 경로가 없어 그 host를 보지 않는다.
-OCI는 별도 경로다: compose 서비스 `alloy`가 api actuator·ai `/health`·host node 지표·textfile(MySQL 백업)을
+OCI는 별도 경로다: compose 서비스 `alloy`가 api actuator·ai `/health`·host node 지표·textfile(MySQL 백업·Upstash 사용량)·api ERROR 로그 줄 수를
 Grafana Cloud(Free) Prometheus로 remote_write하고, Grafana Cloud 경보가 같은 Discord 채널로 보낸다. 외부 시점은
 Synthetic Monitoring HTTP check(`api-laimory-readyz`, 서울 probe 1곳, 1분)가 `https://api.laimory.app/readyz`를 본다.
 
@@ -448,9 +448,12 @@ Synthetic Monitoring HTTP check(`api-laimory-readyz`, 서울 probe 1곳, 1분)�
   NoData=Alerting, 저트래픽에서 최소 요청 수 gate로 비는 5xx·p95와 조건부 결과(Hikari 대기, TLS 30일 구간)는 NoData=OK.
   그래서 NoData=Alerting 규칙의 식은 정상일 때도 값(0)을 돌려줘야 한다 — `(...) > 0` 필터로 정상 결과를 비우면 정상
   상태가 곧 경보가 된다(승격 전 복제 정지 규칙이 이 실수로 정상 복제 중 Pending에 들어간 적이 있다).
-- OCI MySQL은 2026-11-23부터 prod primary라 복제 정지·지연 규칙과 replica 수집 timer는 지웠다(규칙 14개).
-  lifecycle 3종은 AWS WAS가 계산해 AWS Prometheus로 내보내는 지표라 WAS가 OCI DB를 보는 지금도 그쪽에서 돈다 —
-  `laimory.app`을 OCI로 옮길 때 함께 옮기고, ERROR 로그 경보는 OCI 로그 저장소가 생길 때 옮긴다.
+- 2026-11-23부터 prod 전체(트래픽·DB·스케줄러)가 OCI 단일 host이고 AWS prod WAS·MySQL·관측 host는 중지했다. 그래서
+  lifecycle 3종·Upstash 사용량·ERROR 로그 경보도 이 경로로 옮겼고, nginx가 내보내는 인증서(`laimory.app`·`api.laimory.app`)의
+  만료를 host timer가 SNI로 읽어 경보한다(규칙 23개). ERROR 로그 경보는 로그를 Cloud로 보내지
+  않는다 — Alloy가 host의 docker json-file 로그에서 `service=laimory`·`level=ERROR` 줄만 세어 counter
+  (`loki_process_custom_laimory_app_error_logs_total`)로 보낸다. 로그 자체의 보존은 컨테이너 로그 회전 설정만큼이고
+  검색 가능한 로그 저장소는 아직 없다(미구현). Upstash 사용량은 host timer가 Developer API로 읽는다(Redis 명령 한도 미소비).
 - secret(metrics write token, service account token, webhook)과 stack 주소·remote_write URL·username은 저장소에 두지 않는다.
   metrics token은 host의 `0400 root` 파일이고 Alloy가 요청마다 읽으므로 같은 inode 덮어쓰기로 무중단 교체한다.
 

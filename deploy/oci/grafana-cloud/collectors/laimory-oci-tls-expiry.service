@@ -1,0 +1,13 @@
+[Unit]
+Description=Laimory OCI served TLS certificate expiry metric collector
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/collect-tls-expiry
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/laimory/textfile
