@@ -2,7 +2,7 @@
 
 ## Scope
 
-현재 dev·prod·test 애플리케이션 배포, Docker runtime과 수동 운영 경계를 설명한다.
+현재 dev·test 애플리케이션 배포(AWS)와 prod(OCI) 수동 배포 경계, Docker runtime을 설명한다.
 
 ## Read When
 
@@ -18,18 +18,21 @@ deploy workflow, preflight, health gate, container, environment injection 또는
 
 ## Current Application Deployment
 
-`deploy.yml` 하나가 dev·prod·test를 모두 배포한다. 환경은 **Resolve deploy
-environment step 한 곳**에서만 정해진다 — `dev` push는 dev, `main` push는 prod, `test` push는
+`deploy.yml`은 AWS의 dev·test만 배포한다. **prod(OCI)는 이 workflow의 대상이 아니다** — `main` push는 실행되지
+않고 수동 실행에도 prod 선택지가 없다. prod 자동 배포 경로는 아직 없으며(미구현, #669) OCI api 갱신은 수동
+이미지 빌드·교체다. AWS prod WAS의 `.env`는 OCI DB를 가리킨 채 보관돼 있어, 그 host로 배포가 되살아나면 OCI DB에
+migration이 적용되고 스케줄러가 겹칠 수 있다. harness가 `main` trigger·prod 선택지·`PROD_*` secret 참조의 복귀를 막는다.
+
+환경은 **Resolve deploy environment step 한 곳**에서만 정해진다 — `dev` push는 dev, `test` push는
 test(#400), `workflow_dispatch`는 필수 `environment` 입력(기본값 없음)을 따른다. 이후 어떤 step도
 branch·event를 다시 보지 않고 이 step의 출력만 읽는다. 알 수 없는 환경이거나 해당 환경의 instance
 목록·role ARN이 비면 AWS 접근 전에 실패한다.
 
-배포 role도 이 step이 고른다 — dev·prod는 기존 공용 role, test는 전용 OIDC role(`vars.
+배포 role도 이 step이 고른다 — dev는 기존 공용 role, test는 전용 OIDC role(`vars.
 AWS_TEST_DEPLOY_ROLE_ARN`, trust가 `refs/heads/test`뿐이고 SSM 대상도 test instance 1대 한정)이다.
-기존 role이 dev·prod instance를 모두 SSM 대상으로 허용하므로 그 두 환경 사이에서는 이 단일 분기가
-환경 혼선을 막는 지점이고, test는 role 자체가 격리를 더한다. `workflow_dispatch`로 `environment=test`를
-고를 때는 **실행 ref도 `test`여야 한다** — trust가 다른 ref를 거부하므로 resolve가 자격증명 전에
-명확한 진단으로 fail-closed한다(dev·prod의 cross-ref dispatch는 기존 계약 그대로).
+기존 role의 AWS 권한은 prod instance도 SSM 대상으로 허용하므로 이 단일 분기가 환경 혼선을 막는 지점이다.
+`workflow_dispatch`로 `environment=test`를 고를 때는 **실행 ref도 `test`여야 한다** — trust가 다른 ref를
+거부하므로 resolve가 자격증명 전에 명확한 진단으로 fail-closed한다(dev의 cross-ref dispatch는 기존 계약 그대로).
 
 ⚠️ test 브랜치를 **새로 만들거나 dev로 리셋한 직후의 push는 배포를 트리거하지 않는다.** 브랜치 생성
 push는 비교할 diff가 없어(대개 dev HEAD와 동일 커밋) push 트리거의 `paths` 필터에 걸리는 변경 파일이
@@ -38,60 +41,27 @@ dispatch로 한다 — test ref에서 `environment=test`를 고르고, 직전 de
 SHA와 ECR digest를 입력한다(digest는 `aws ecr batch-get-image`로 조회). 이후 image 입력 경로에
 닿는 실변경 push부터는 자동 배포가 정상 동작한다.
 
-환경별 instance 목록과 runtime 기대값은 Resolve 단계가 정한다. prod는 두 WAS를 ALB에서 한 대씩
-제외·복귀시키며, dev/test는 단일 host에서 기존 SSM 배포를 수행한다.
+환경별 instance 목록과 runtime 기대값은 Resolve 단계가 정한다. dev/test는 각각 단일 host다.
 
-1. `dev`/`main`/`test` push 중 Docker image 입력이나 `deploy.yml` 자체가 바뀌면 자동 배포한다.
+1. `dev`/`test` push 중 Docker image 입력이나 `deploy.yml` 자체가 바뀌면 자동 배포한다.
    test code·문서·monitoring-only 변경은 application을 재배포하지 않는다.
 2. 환경별 concurrency group으로 직렬화하고 `cancel-in-progress: false`를 유지한다. 기본 대기 슬롯은
-   한 개이며 추가 실행으로 대체될 수 있다. 수동 host 선택도 같은 환경 group을 쓰므로 prod 전체 배포와
-   단독 복구가 동시에 진행되지 않는다. 이 제한은 AWS 콘솔 조작이나 workflow 종료 후 남은 SSM 작업까지
+   한 개이며 추가 실행으로 대체될 수 있다. 이 제한은 AWS 콘솔 조작이나 workflow 종료 후 남은 SSM 작업까지
    잠그지 않는다.
 3. OIDC로 환경별 deploy role을 assume한다. push는 commit SHA image를 build/push하고,
    deploy-existing은 입력 SHA tag와 digest가 일치하는지 ECR에서 확인한 뒤 digest로 배포한다.
-4. prod는 `PROD_TARGET_GROUP_ARN` Secret을 사용한다. instance/HTTP/8080, `/readyz` HTTP 200 healthcheck,
-   연결된 ALB와 등록 대상이 prod 목록에 속하는지 확인한다. host 목록은 서로 다른 두 대여야 한다.
-5. prod는 host별로 **prepare → peer healthy → deregister/drain → replace → register/healthy → cleanup**
-   순서로 진행한다. ALB healthy까지 성공해야 다음 host로 가며, cleanup은 아래의 경고 처리 예외를 따른다.
-   dev/test는 `deploy` 한 단계로 준비·교체·정리를 수행한다.
-6. prepare는 기존 container를 유지하며 `.env`·credential·환경/mode 검증, ECR pull, runtime UID 권한,
-   subject secret/schema와 `app_config` preflight를 실행한다. 준비 성공 시 새 image를 prune하지 않는다.
-   이전 실행의 `laimory-rollback` container가 남아 있으면 덮어쓰지 않고 상태 확인을 요구한다.
-7. prod peer가 ALB에 healthy로 등록돼 있어야 현재 host의 신규 요청을 제외한다. ALB deregistration
-   완료까지 기다린 뒤에만 replace를 시작한다. 조회·제외·대기 실패 시 앱을 교체하지 않는다.
-8. prod replace는 기존 `laimory`를 `laimory-rollback`으로 보존한 뒤 준비 image와 runtime mount를 확인한다.
-   기존 container의 exact image·environment·mount가 복구 후보이며, 중지된 container도 image prune에서 보호된다.
-   모든 준비 검사 후 첫 stop 직전에만
-   `APP_COMMIT_SHA`를 temp+rename으로 원자 upsert한다. `.env`의 나머지 값·0600·owner를 보존한다.
-9. 실행 중인 container는 `docker stop --time 120`으로 종료한다. Docker 오류나 SIGKILL 종료 코드 137은
+4. 원격 script 하나가 기존 container를 유지한 채 `.env`·credential·환경/mode 검증, ECR pull, runtime UID 권한,
+   subject secret/schema와 `app_config` preflight를 실행한다.
+5. 모든 준비 검사 후 첫 stop 직전에만 `APP_COMMIT_SHA`를 temp+rename으로 원자 upsert한다.
+   `.env`의 나머지 값·0600·owner를 보존한다.
+6. 실행 중인 container는 `docker stop --time 120`으로 종료하고 제거한다. Docker 오류나 SIGKILL 종료 코드 137은
    무시하지 않으며 해당 시도에서 remove/run을 이어가지 않는다. 이미 종료됐거나 생성에 실패해 없는 container는
-   단독 재배포로 복구할 수 있다. prod는 이전 container를 남기고 dev/test는 제거한다.
-   `--pull=never`, `--env-file`로 새 container를 실행한다.
-10. Flyway 시작 migration과 JPA 검증을 포함해 `/readyz`와 `/api/v1/intro`를 확인한다. prod는 이어서
-    ALB에 재등록하고 healthy까지 기다린다. 같은 실행에서 먼저 성공한 host가 없으면 replace의 확정 실패나
-    ALB 복귀 실패 시 해당 host만 이전 container로 한 번 rollback한다.
-    peer healthy → deregister/drain → rollback → register/healthy 순서다.
-    rollback은 실패한 새 container를 정상 종료·제거하고 이전 container를 원래 이름으로 복원·시작하며,
-    실제 이전 runtime의 SHA로 `.env`의 `APP_COMMIT_SHA`만 원자 복원한다. 동일 readiness/intro 검사를 거친다.
-    rollback 성공도 원래 workflow 실패를 유지하며 다음 host를 교체하지 않는다.
-    A가 ALB healthy까지 성공한 뒤 B에서 확정 실패하면 B만 같은 신버전으로 한 번 재시도한다.
-    준비 실패는 prepare부터 반복하고, 준비 완료 뒤에는 image를 다시 pull하지 않는다. 매 시도에서
-    peer healthy와 deregister/drain을 확인한다. 이미 교체를 시작했으면 retry phase가 실패 container를
-    제거·재생성하며, stop 이전 실패로 보관 container만 남았으면 그것을 정상 종료한 뒤 새 앱을 생성한다.
-    기존 보관 후보는 덮어쓰지 않는다. 재시도 후 앱·ALB healthy까지 성공하면 workflow도 성공한다.
-    재시도 실패는 추가 retry나 구버전 rollback 없이 종료하고 정상 A와 보관 후보를 유지한다.
-11. 임시 `.env` 제거와 원래 종료 상태 보존은 각 원격 script의 EXIT에서 수행한다. prod image prune은
-    각 준비 실패의 prepare EXIT에서, 준비 성공 뒤에는 해당 host의 복구 판단까지 끝난 후 별도 cleanup SSM에서
-    1회 수행한다. 준비 실패 후 재준비한 host는 prepare 실패 정리와 최종 cleanup이 각각 있을 수 있다.
-    peer/drain 실패로 교체하지 못한 경우도 정리한다. replace/retry/rollback EXIT에서는 image를 prune하지 않는다.
-    신버전 ALB healthy가 성공한 경우에만 cleanup이 보관 container를 삭제한다. 복구 실패 시 후보를 보존한다.
-    dev/test는 deploy EXIT에서 1회 prune한다. prune 실패는 배포 성공·실패를 바꾸지 않는다.
-12. prepare/replace/retry/rollback/dev·test deploy의 원격 실행이 종료됐는지 불명확하면 추가 retry/rollback/cleanup/배포를 보내지 않는다.
-    SSM send 오류·취소·timeout 때는 command와 host 상태를 수동 확인한다. GitHub polling 종료가 EC2의
-    실행 취소를 뜻하지 않는다. 별도 cleanup 단계는 예외다. 앱 교체와 ALB 복귀가 성공했다면 cleanup 실패나
-    종료 여부 미확인은 경고만 남기고 다음 host로 진행하며, 기존 배포 성공·실패 결과를 유지한다.
-    운영자는 경고가 난 host의 SSM 명령 종료 여부와 디스크 사용량을 확인하고, 해당 host의 다음 배포 전에
-    남은 정리 명령이 실행 중인지 확인한다.
+   재배포로 복구할 수 있다. `--pull=never`, `--env-file`로 새 container를 실행한다.
+7. Flyway 시작 migration과 JPA 검증을 포함해 `/readyz`와 `/api/v1/intro`를 확인한다.
+8. 임시 `.env` 제거, image prune 1회와 원래 종료 상태 보존은 원격 script의 EXIT에서 수행한다.
+   prune 실패는 배포 성공·실패를 바꾸지 않는다.
+9. SSM send 오류·취소·timeout 때는 추가 명령을 보내지 않고 실패한다. command와 host 상태를 수동 확인한다.
+   GitHub polling 종료가 EC2의 실행 취소를 뜻하지 않는다.
 
 ## Monitoring Alert Rule Deployment
 
@@ -121,8 +91,6 @@ exact-one으로 검증만 하며, `APP_COMMIT_SHA`가 workflow가 `.env`에 쓰�
 host `.env`는 container 생성 시 `docker run --env-file`로 읽힌다. 값을 바꾼 뒤 `docker restart`만 하면
 기존 container environment가 유지되므로 새 값이 반영되지 않는다. runtime flag 활성화·롤백은 deploy
 workflow 재실행 또는 기존 container stop/remove 뒤 동일 인자의 재생성이 필요하다.
-prod 자동 rollback은 예외로 배포 직전 container 자체를 재시작하므로 당시의 environment와 mount를 유지한다.
-host `.env`에서는 `APP_COMMIT_SHA`만 복구하며, 수동으로 바꾼 다른 설정이나 외부 credential 파일을 되돌리지는 않는다.
 
 ### Preflight
 
@@ -130,16 +98,14 @@ host `.env`에서는 `APP_COMMIT_SHA`만 복구하며, 수동으로 바꾼 다�
 
 - `JWT_SECRET` minimum length, `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`,
   `KAKAO_CLIENT_ID`/`KAKAO_CLIENT_SECRET` presence
-- `APP_ADMIN_PORT=8081`은 dev/prod exact-one, test는 key 부재. `.env` 선반영 없이 새 코드가
+- `APP_ADMIN_PORT=8081`은 dev exact-one, test는 key 부재. `.env` 선반영 없이 새 코드가
   배포되면 기존 container를 내리기 전에 실패한다.
-- `SELECT COUNT(*) FROM app_config`가 1이어야 한다(dev/prod/test 공통; test는 dev DB 공유).
+- `SELECT COUNT(*) FROM app_config`가 1이어야 한다(dev/test 공통; test는 dev DB 공유).
   subject schema 검사 뒤·SHA upsert/stop 전에 같은 datasource와 MySQL client로 확인한다.
   query 실패·0행·복수 행은 fail-closed하고 데이터 병합·삭제는 자동화하지 않는다.
 - 환경 고정값 exact-one: `REDIS_KEY_PREFIX` · `APP_ENV` · `APP_GEO_MODE` · `SWAGGER_ENABLED`가
   각각 정확히 한 줄이고 기대값과 byte 일치. 기대값은 Resolve step이 환경별로 주입한다
-  (dev는 `dev_`/`dev`/`kakao`/`true`, prod는 빈 prefix/`prod`/`kakao`/`false`, test는 `test_`/`test`/`kakao`/`true`).
-  값이 리터럴에서 변수로 내려갔을 뿐 exact-one·byte 일치 성질은 같다. 다만 prod의
-  `REDIS_KEY_PREFIX`는 빈 값이 정상이라, 이 키만은 Resolve step의 환경 판정이 유일한 방어선이다
+  (dev는 `dev_`/`dev`/`kakao`/`true`, test는 `test_`/`test`/`kakao`/`true`).
 - `APP_AI_MODE` exact-one(`noop|fake|http|agentcore`); `http`면 non-empty `APP_AI_HTTP_BASE_URL`도
   정확히 한 줄, `agentcore`면 `APP_AI_AGENTCORE_RUNTIME_ARN`·`APP_AI_AGENTCORE_ENDPOINT`가 각각
   정확히 한 줄 non-empty이고 ARN은 배포 region의 full Runtime ARN이어야 한다(#338)
@@ -248,44 +214,36 @@ SSM 권한과 해당 host의 local process 권한을 가진 사람은 관리 기
 작업 후 브라우저를 닫고 Ctrl+C로 터널을 종료한다. CSRF 세션이 만료되면 새로고침한다. 요청 실패로
 저장 여부가 불확실하면 현재 값/이력을 다시 조회한 뒤 판단하고 자동 재시도하지 않는다.
 기능 비활성 rollback은 별도 승인 후 `APP_ADMIN_PORT` 제거와 **수동 container 재생성** 또는 이전
-image 재배포다. 새 workflow는 dev/prod key 부재를 거절하므로 제거 후 단순 workflow 재실행은 안 된다.
+image 재배포다. 새 workflow는 dev key 부재를 거절하므로 제거 후 단순 workflow 재실행은 안 된다.
 이미 반영된 약관 INSERT·앱 설정 UPDATE는 앱 rollback 후에도 남는다.
 
 ### Existing health gates
 
 - 앱 deploy gate는 메인 포트 `/readyz`(readinessState·DB·Redis)와 `/api/v1/intro`(DB·app_config)다.
-  prod는 ALB target healthy 복귀도 확인해야 성공이다.
 - `/status`는 DB connection probe지만 deploy gate가 아니다. readiness가 Kakao·S3·AI 전체의 정상 동작을
   보장하는 것은 아니다.
 - Prometheus/Grafana 장애는 앱 기동·요청·deploy health gate에 영향을 주지 않는다.
-- prod 배포 중 health failure는 같은 실행에서 앞선 host의 신버전 배포 성공 여부에 따라 처리한다.
-  앞선 성공이 없으면 보관 container로 rollback, 있으면 같은 신버전으로 한 번 재시도한다. dev/test와
-  배포 완료 후 장애는 수동 복구한다. 성공한 배포의 이전 image는 cleanup이 prune할 수 있으므로 이후 수동
-  rollback은 ECR lifecycle(최근 15개 보존)에서 이전 SHA를 다시 pull해 재배포한다.
+- dev/test 배포 중 health failure와 배포 완료 후 장애는 수동 복구한다. 수동 rollback은 ECR lifecycle(최근 15개
+  보존)에서 이전 SHA를 다시 pull해 재배포한다.
 
 PHOTO delete worker와 `timeline_photo_delete_jobs`는 #551에서 제거됐다. V12 `DROP TABLE`은 job entity를 가진
 구 image와 호환되지 않으므로(Hibernate validate 기동 실패) V12 이후 그 이전 image로 rollback하려면 V1의
 `CREATE TABLE timeline_photo_delete_jobs`를 먼저 승인받아 적용한다. host `.env`의 `TIMELINE_PHOTO_DELETE_*`는
 더 이상 읽히지 않는다(정리는 선택, host 변경 건별 승인).
 
-### Rolling deployment time budgets (#484)
+### Deployment time budgets
 
 | 단계 | 기준 | 제한 |
 |---|---|---|
-| ALB drain | live prod deregistration delay 30초 | AWS waiter 15초 간격, 40회 후 실패. 완료 전에 앱을 내리지 않음 |
 | 앱 종료 | Boot 3.5.8 기본 graceful, lifecycle phase당 기본 30초 | Docker stop 최대 120초. SIGKILL(137)이면 배포 실패 |
 | 앱 준비 | 90초 마감까지 readiness/intro polling | 요청별 connect 1초·전체 2초, 재시도 간격 2초. 마지막 검사/간격은 최대 6초 추가 가능 |
-| ALB 복귀 | live healthcheck 15초, healthy threshold 2 | AWS waiter 15초 간격, 40회 후 실패 |
 | SSM | 원격 command executionTimeout 900초, runner polling 900초 | delivery 지연 등으로 원격 상태가 불명확하면 수동 확인 |
 
-2026-09-14 조회에서 prod 두 host는 healthy였고 `/readyz`·intro는 200, Docker stop timeout과 Spring
-shutdown override는 없었다. ALB/host 설정은 live가 권위다. 30초 drain보다 오래 걸리는 요청이나 배포 중
-남은 WAS까지 장애 나는 상황의 무중단을 보장하지 않는다. 실제 적용 검증에서 요청 종류·부하·지속시간을 기록한다.
 Boot 기본 graceful을 사용하므로 application.properties에 같은 설정을 중복 추가하지 않는다.
 
 HTTP drain과 background 작업 완료는 별개다. 기존 `DailyReminderWorker`는 claim commit 후 process가
 종료되면 해당 알림이 누락될 수 있는 at-most-once 계약이며, 계정 삭제·draft cleanup·orphan 스위퍼 등 다른
-worker도 각자의 DB 재시도 계약을 따른다. 이번 배포 변경은 이 계약이나 스케줄러를 바꾸지 않는다.
+worker도 각자의 DB 재시도 계약을 따른다.
 
 ## Manual Operations
 
@@ -312,17 +270,8 @@ Flyway 전용 계정(`SPRING_FLYWAY_USER`)의 DDL 권한은 live 조회로 확�
   ②를 건너뛰고 queue를 켠 채 롤링하면 구버전 인스턴스가 `DISPATCH_PENDING` task를 읽지 못해 500이 된다.
   rollback은 route를 `inline`으로 되돌려 재생성 → worker가 남은 메시지를 비우고 큐 경로 task 수명(6분)이 지난 뒤 worker
   off 순서다. 이 기능 이전 코드로 되돌리는 것은 `DISPATCH_PENDING` task가 남지 않은 뒤에만 한다.
-- Redis primary 전환(#638)은 host `.env`의 `REDIS_*`와 `REDIS_MIRROR_*` 값을 두 WAS에서 맞바꾸고
-  `workflow_dispatch`(environment=prod, deploy_target=all, 현재 image의 sha·digest)로 재생성하는 것이다. rollback은 다시
-  맞바꿔 재배포다. 전환 재배포 중 auto rollback이 일어나면 직전 container(옛 env)가 재시작돼 host `.env`와 실행 env가
-  어긋나고 이미 넘어간 WAS와 primary가 갈린다 — 즉시 두 host `.env`를 되돌리고 재배포해 맞춘다. 전환 전 확인: dual write
-  기간 `redis mirror write failed` 0건, 새 primary의 `notify-keyspace-events`에 `K`·`x`.
-- prod 배포의 live 선행 조건은 repository Secrets `PROD_INSTANCE_IDS`·`PROD_TARGET_GROUP_ARN`,
-  해당 host에 대한 SSM 배포 권한, ALB 조회·등록·해제 권한이다. deploy role에
-  `elasticloadbalancing:DescribeTargetGroups`·`DescribeTargetHealth` 조회 권한과 **prod target group ARN에
-  한정된** `RegisterTargets`·`DeregisterTargets` 권한이 필요하다. ALB 설정 변경 권한은 필요하지 않다.
-  두 Describe API는 Resource `*`가 필요하다([AWS 권한 표](https://docs.aws.amazon.com/service-authorization/latest/reference/list_elbv2.html)).
-  권한·Secret의 실제 반영 여부와 live 배포 검증 여부는 저장소 코드만으로 보장되지 않는다.
+- AWS prod 배포에 쓰던 repository Secrets `PROD_INSTANCE_IDS`·`PROD_TARGET_GROUP_ARN`과 deploy role의 prod SSM·ALB
+  권한은 workflow가 더는 읽지 않는다(정리는 AWS 폐기 때 별도 승인).
 
 maintenance나 장애 대응에서 `DEPLOY_PAUSED=true`로 두면 `dev` push 실행은 build·SSM 전송 없이 skip되어 기존 container와
 `.env`를 유지하며, manual dispatch는 pause를 무시한다. `build-only.yml`은 입력받은 exact
@@ -333,20 +282,9 @@ SHA tag→digest 조회에는 deploy role이 이미 가진 repository 한정 `ec
 `ecr:DescribeImages` 추가 권한은 요구하지 않는다. 이 입력 경로는 운영자가 승인한 exact image를
 수동 재배포하는 경로다.
 
-수동 prod 배포의 `deploy_target`은 `all`(기본값), `host-1`, `host-2`이며 Secret의 instance 목록 순서로
-해석한다. 전체 두 host 구성을 검증한 뒤 선택한 host만 배포하고, 다른 host의 healthy 확인은 유지한다.
-전체 배포에서 A 성공 후 B 실패 시 B는 **같은 신버전**으로 자동 재시도를 한 번 수행하고 A를 유지한다.
-재시도 성공은 전체 배포 성공이다. 재시도 실패는 B를 구버전으로 rollback하지 않고 workflow를 실패로 끝낸다.
-원인을 해결한 뒤 `host-2`에 **A와 같은 신버전 SHA/digest**를 수동 재배포한다. A에는 교체 명령을 보내지 않는다.
-수동 단독 배포는 같은 실행에서 먼저 성공한 host가 없으므로 첫 host와 같은 rollback 정책이다.
-host 번호가 2이거나 peer가 healthy라는 사실만으로 그 peer의 신버전 배포 성공을 추정하지 않는다.
-자동 rollback 후보 부재나 rollback/retry 자체 실패 시 host/SSM/ALB와 보관 container를 확인해 수동 복구한다.
-남아 있는 `laimory-rollback`은 다음 prepare를 막는다. 상태 확인 없이 삭제하지 않는다.
-신버전 자체 문제로 이전 image를 선택한다면 ECR 사용 가능성과 적용된 DB
-schema의 구 앱 호환성을 먼저 확인한다. 비정상 host부터 복구하고 필요한 나머지 host를 순차 rollback한다.
+이전 image를 수동 재배포할 때는 ECR 사용 가능성과 적용된 DB schema의 구 앱 호환성을 먼저 확인한다.
 앱 rollback은 Flyway가 적용한 DB 변경을 되돌리지 않는다. 자동 배포/Flyway 중단은 별도 명시 동의가 필요하다.
-일반 롤링 migration의 구 앱 호환성은 계속 필수이며, 자동 복구가 임의 SQL의 호환성을 판정하지 않는다.
-구 앱도 현재 DB와 호환되지 않으면 복구가 실패할 수 있다. DB undo나 Flyway 비활성화로 우회하지 않는다.
+DB undo나 Flyway 비활성화로 우회하지 않는다.
 
 `DEPLOY_PAUSED`는 이미 pause gate를 통과한 run에 소급되지 않으므로 maintenance 시작 전 진행 중인
 application deploy run이 0건인지 확인한다.
@@ -356,23 +294,20 @@ application deploy run이 0건인지 확인한다.
 - preflight와 health gate를 기존 container stop보다 앞뒤 어느 위치에서 수행하는지 정확히 유지한다.
   `APP_COMMIT_SHA` 원자 upsert는 모든 pre-stop 검사·pull 성공 뒤, 첫 stop 직전에만 수행한다.
 - 장기 실행 `docker run`에 `-e`/`--env`를 추가하지 않는다 — runtime env는 host `.env`가 SSOT다.
-  일회성 preflight `docker run --rm`은 이 제한 대상이 아니다. 자동 rollback은 기존 container runtime을 보존한다.
-- 준비 성공과 replace/retry/rollback 종료 사이에는 image를 보존한다. 준비 실패 시마다 prune하고, 준비 성공 뒤에는
-  host 복구 판단이 끝난 후 1회 cleanup한다. prune은 배포 status를 바꾸지 않는다.
-  prepare/replace/retry/rollback의 원격 상태 불명확 시 자동 정리를
-  추가하지 않는다. 별도 cleanup의 실패·상태 미확인은 경고로 처리하며, 그 전에 배포가 성공했다면 다음
-  host로 진행한다.
+  일회성 preflight `docker run --rm`은 이 제한 대상이 아니다.
+- image prune은 원격 script EXIT에서 1회만 수행하고 배포 status를 바꾸지 않는다.
 - remote script의 heredoc 본문은 `.github/scripts/test-deploy-contract.sh`가 추출·실행해 검증한다 —
   script 계약을 바꾸면 harness를 같은 변경에서 통과시킨다.
 - deploy workflow가 읽는 이름과 GitHub repository 설정을 맞춘다. instance 목록
-  (`DEV_INSTANCE_ID`·`PROD_INSTANCE_IDS`·`TEST_INSTANCE_ID`), prod target group(`PROD_TARGET_GROUP_ARN`)과 monitoring instance/bucket
+  (`DEV_INSTANCE_ID`·`TEST_INSTANCE_ID`)과 monitoring instance/bucket
   (`MONITORING_INSTANCE_ID`·`MONITORING_BACKUP_BUCKET`)은 Secrets, 나머지
   (`AWS_DEPLOY_ROLE_ARN`·`DEPLOY_PAUSED`)는 Variables다. Actions가 step의 `env:` 블록을
   로그에 그대로 echo하는데 Variable은 마스킹되지 않고 이 저장소는 PUBLIC이라, host 식별자를
   Variable로 되돌리지 않는다 — 두 deploy harness가 `vars.` 회귀를 검사한다.
 - 배포 환경 판단은 Resolve step 한 곳에만 둔다. 다른 step이 branch·event를 다시 보고 환경을
   정하지 않는다 — harness가 이 단일 지점 계약을 검사한다.
-- host가 여러 대인 환경은 순차 배포한다. 첫 host의 실패 또는 후속 host의 1회 재시도 실패 시 남은 host로 진행하지 않는다.
+- AWS 배포 trigger에 `main`을 되돌리지 않는다 — harness가 검사한다.
+- host가 여러 대인 환경은 순차 배포한다. 실패 시 남은 host로 진행하지 않는다.
 - application deploy trigger는 Docker image와 remote deploy 계약에 영향을 주는 path로만 제한한다.
 - monitoring alert workflow는 관련 path로만 trigger하고 credential을 host 밖으로 전달하지 않는다.
 - 저장소 변경만으로 live AWS나 host가 바뀐다고 설명하지 않는다.
@@ -380,10 +315,8 @@ application deploy run이 0건인지 확인한다.
 
 ## Known Gaps
 
-- prod 롤링은 한 WAS가 전체 부하를 감당한다는 전제다. 배포 중 다른 WAS의 독립 장애까지 보장하지 않는다.
+- prod(OCI) 자동 배포 경로가 없다(#669).
 - 단일 host dev/test는 무중단 구성이 아니며 automatic rollback도 없다. 전체 외부 의존성 readiness check는 없다.
-- prod 자동 복구는 배포 중 실패만 처리한다. 완료 후 비즈니스 오류, 보관 후보 부재, peer 장애,
-  SSM 상태 불명확, DB 비호환 또는 rollback/retry 자체 실패에서는 자동으로 정상 복귀함을 보장하지 않는다.
 - HTTP drain은 background 작업의 완료/재시도 계약을 대신하지 않는다.
 
 ## Update When
