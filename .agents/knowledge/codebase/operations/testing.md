@@ -67,8 +67,11 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   본문을 그대로 실행해 검증한다. fake docker로 preflight·교체·정리의 fail-closed를, fake SSM으로 runner의 결과
   전달을 검사하고, prod(`main` trigger·prod 선택지·`PROD_*` secret)가 AWS 배포로 되돌아오면 실패한다.
   실제 AWS 권한은 이 fixture로 검증되지 않는다.
+- OCI prod 배포 계약은 `.github/scripts/test-oci-deploy-contract.sh`가 검증한다. `deploy-oci.yml`의 trigger·권한·Environment·
+  고정 action과, host 배포 스크립트 원본을 상태를 기억하는 fake docker로 실행한 전환·복귀·시간 차단·실패 시 옛 색 유지·
+  공개 출력에 명령 출력이 섞이지 않음을 본다. 실제 nginx 전환의 무중단은 로컬 부하 시험으로만 확인한다.
 - 관리자 SSM target 선택은
-  `bash .github/scripts/test-admin-tunnel.sh`가 검증하며, 이 검사와 앱 배포 harness는 PR CI에서 실행한다.
+  `bash .github/scripts/test-admin-tunnel.sh`가 검증하며, 이 검사와 앱·OCI 배포 harness는 PR CI에서 실행한다.
 - 관리자 connector/Host/Origin/CSRF/OpenAPI는 `AdminHttpTest`·`AdminDisabledHttpTest`의 실 Tomcat
   HTTP 테스트(인프라 없음), INSERT 불변성은 `TermPersistenceIntegrationTest`, Redis CSRF 세션과
   저장 후 `/intro` 반영은 `AdminPersistenceIntegrationTest`가 검증한다.

@@ -57,8 +57,8 @@
             "service": "laimory",
             "severity": "critical"
           },
-          "summary": "Alloy cannot scrape the OCI api container (api:9090).",
-          "description": "Check docker compose ps api and the api logs on the OCI host. No data (Alloy or the host is down) also fires this rule.",
+          "summary": "Alloy cannot scrape either OCI api color (api-blue:9090, api-green:9090).",
+          "description": "Check docker ps -a for laimory-api-blue-1/laimory-api-green-1 and the active color's logs on the OCI host. No data (Alloy or the host is down) also fires this rule.",
           "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#availability"
         },
         {
@@ -73,8 +73,8 @@
             "service": "laimory",
             "severity": "critical"
           },
-          "summary": "The OCI ai container does not answer /health.",
-          "description": "Check docker compose ps ai and the ai logs on the OCI host. Timeline generation fails while this fires.",
+          "summary": "The OCI ai does not answer /health through the nginx internal listener.",
+          "description": "Check docker ps -a for laimory-ai-blue-1/laimory-ai-green-1, nginx, and the active ai color's logs on the OCI host. Timeline generation fails while this fires.",
           "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#availability"
         },
         {
@@ -357,7 +357,7 @@
             "severity": "warning"
           },
           "summary": "The api container logged ERROR lines in the last 5 minutes.",
-          "description": "docker compose logs --since 10m api | grep '\"level\":\"ERROR\"' on the OCI host.",
+          "description": "docker logs --since 10m laimory-api-<active color>-1 | grep '\"level\":\"ERROR\"' on the OCI host.",
           "runbook_url": "https://github.com/soma17th-369/Laimory-server/blob/dev/deploy/oci/grafana-cloud/README.md#logs"
         }
       ]

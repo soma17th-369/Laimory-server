@@ -433,7 +433,7 @@ rollback에서도 해당 target을 제거하지 않는다.
 ## OCI prod 경보 (Grafana Cloud Free)
 
 AWS `deploy/monitoring` 스택은 OCI host(api·ai·nginx·mysql 단일 host)로 가는 경로가 없어 그 host를 보지 않는다.
-OCI는 별도 경로다: compose 서비스 `alloy`가 api actuator·ai `/health`·host node 지표·textfile(MySQL 백업·Upstash 사용량)·api ERROR 로그 줄 수를
+OCI는 별도 경로다: compose 서비스 `alloy`가 api 두 색의 actuator·ai `/health`(nginx 내부 listener 경유라 활성 색을 따라감)·host node 지표·textfile(MySQL 백업·Upstash 사용량)·api ERROR 로그 줄 수를
 Grafana Cloud(Free) Prometheus로 remote_write하고, Grafana Cloud 경보가 같은 Discord 채널로 보낸다. 외부 시점은
 Synthetic Monitoring HTTP check(`api-laimory-readyz`, 서울 probe 1곳, 1분)가 `https://api.laimory.app/readyz`를 본다.
 
@@ -443,7 +443,9 @@ Synthetic Monitoring HTTP check(`api-laimory-readyz`, 서울 probe 1곳, 1분)�
 - 규칙 원본은 `deploy/oci/grafana-cloud/alert-rules.json`·`notification.json`이다. Grafana Cloud는 file provisioning이
   없어 관리자 Mac에서 `apply-alerting.py apply`가 provisioning HTTP API로 덮어쓴다(merge만으로 반영되지 않는다).
   provisioning으로 넣은 규칙은 UI 편집이 잠기며, 그 provenance 권한은 Admin role에만 있어 적용용 service account는 Admin이다.
-- label은 `environment=prod`, `host=oci-prod`, `instance=oci-prod` 고정값뿐이다. AWS 규칙과 달리 환경 중립이 아니라
+- label은 `environment=prod`, `host=oci-prod`, `instance=oci-prod` 고정값이고, api 지표만 blue/green 구분용 `color`가 더 있다
+  (instance를 고정하므로 color가 없으면 두 색이 같은 시계열이 된다). 한 색만 실행되므로 다른 색의 `up=0`은 정상이고
+  규칙은 색을 집계한다. AWS 규칙과 달리 환경 중립이 아니라
   host 고정 selector를 쓴다. 규칙은 NoData를 두 가지로 나눈다 — 수집 자체가 끊기면 알려야 하는 가용성·백업 계열은
   NoData=Alerting, 저트래픽에서 최소 요청 수 gate로 비는 5xx·p95와 조건부 결과(Hikari 대기, TLS 30일 구간)는 NoData=OK.
   그래서 NoData=Alerting 규칙의 식은 정상일 때도 값(0)을 돌려줘야 한다 — `(...) > 0` 필터로 정상 결과를 비우면 정상

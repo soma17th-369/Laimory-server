@@ -5,7 +5,7 @@ OCI 단일 호스트(api·ai·nginx·mysql)의 경보다. AWS의 `deploy/monitor
 
 ```text
 OCI host ── alloy(compose 서비스) ──remote_write──▶ Grafana Cloud(Prometheus) ──경보──▶ Discord
-   │  api:9090 actuator · ai:8080/health · 호스트 /proc·/sys · textfile(MySQL 백업·Upstash 사용량·인증서 만료) · api ERROR 로그 줄 수
+   │  api-blue·api-green:9090 actuator · ai /health(nginx 경유) · 호스트 /proc·/sys · textfile(MySQL 백업·Upstash 사용량·인증서 만료) · api ERROR 로그 줄 수
 Synthetic Monitoring(서울 probe) ──▶ https://api.laimory.app/readyz ─────────┘
 ```
 
@@ -142,7 +142,8 @@ api·ai·nginx는 멈추지 않는다. prod MySQL은 건드리지 않는다.
 
 ### availability
 
-- OCI API down / AI health: `docker compose ps`, `docker compose logs --since 30m api|ai`.
+- OCI API down / AI health: `docker ps -a`(활성 색은 `/opt/laimory/nginx/upstream/*.conf`), `docker logs --since 30m laimory-api-<색>-1`.
+  정지 보관한 색의 `up=0`은 정상이다 — 경보는 두 색의 최댓값을 본다.
   지표가 아예 안 들어와도(Alloy·host 정지) 발화한다.
 - HTTPS probe: 밖(서울)에서 본 `/readyz`다. readyz는 DB·Redis를 포함하므로 앱이 떠 있어도 의존성이
   끊기면 발화한다. nginx·인증서·DNS도 함께 본다.
@@ -204,7 +205,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now laimory-oci-upstash-
 ### logs
 
 Alloy가 호스트의 docker json-file 로그를 읽어 Spring 앱(`service=laimory`)의 `level=ERROR` 줄 수만 counter로 보낸다. 로그 내용은
-어디로도 나가지 않는다. 경보가 오면 `docker compose logs --since 10m api | grep '"level":"ERROR"'`. 로그 보존은 컨테이너 로그
+어디로도 나가지 않는다. 경보가 오면 `docker logs --since 10m laimory-api-<활성 색>-1 | grep '"level":"ERROR"'`. 로그 보존은 컨테이너 로그
 회전 설정(json-file `max-size`·`max-file`)만큼이다.
 
 ## 아직 OCI로 옮기지 않은 경보

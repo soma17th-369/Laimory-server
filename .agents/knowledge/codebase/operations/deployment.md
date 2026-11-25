@@ -2,7 +2,7 @@
 
 ## Scope
 
-현재 dev·test 애플리케이션 배포(AWS)와 prod(OCI) 수동 배포 경계, Docker runtime을 설명한다.
+현재 dev·test 애플리케이션 배포(AWS), prod 무중단 배포(OCI)와 Docker runtime, 수동 운영 경계를 설명한다.
 
 ## Read When
 
@@ -10,7 +10,8 @@ deploy workflow, preflight, health gate, container, environment injection 또는
 
 ## Authoritative Sources
 
-- `.github/workflows/deploy.yml`, `.github/workflows/deploy-monitoring.yml`, `.github/workflows/ci.yml`
+- `.github/workflows/deploy.yml`, `.github/workflows/deploy-oci.yml`, `.github/workflows/deploy-monitoring.yml`, `.github/workflows/ci.yml`
+- `deploy/oci/deploy/*`
 - `Dockerfile`
 - `deploy/monitoring/*`
 - live AWS, GitHub repository Variables/Secrets(instance 목록은 Secrets)와 host 상태
@@ -19,8 +20,7 @@ deploy workflow, preflight, health gate, container, environment injection 또는
 ## Current Application Deployment
 
 `deploy.yml`은 AWS의 dev·test만 배포한다. **prod(OCI)는 이 workflow의 대상이 아니다** — `main` push는 실행되지
-않고 수동 실행에도 prod 선택지가 없다. prod 자동 배포 경로는 아직 없으며(미구현, #669) OCI api 갱신은 수동
-이미지 빌드·교체다. AWS prod WAS의 `.env`는 OCI DB를 가리킨 채 보관돼 있어, 그 host로 배포가 되살아나면 OCI DB에
+않고 수동 실행에도 prod 선택지가 없다. prod는 아래 OCI 절의 `deploy-oci.yml`이 배포한다. AWS prod WAS의 `.env`는 OCI DB를 가리킨 채 보관돼 있어, 그 host로 배포가 되살아나면 OCI DB에
 migration이 적용되고 스케줄러가 겹칠 수 있다. harness가 `main` trigger·prod 선택지·`PROD_*` secret 참조의 복귀를 막는다.
 
 환경은 **Resolve deploy environment step 한 곳**에서만 정해진다 — `dev` push는 dev, `test` push는
@@ -62,6 +62,24 @@ SHA와 ECR digest를 입력한다(digest는 `aws ecr batch-get-image`로 조회)
    prune 실패는 배포 성공·실패를 바꾸지 않는다.
 9. SSM send 오류·취소·timeout 때는 추가 명령을 보내지 않고 실패한다. command와 host 상태를 수동 확인한다.
    GitHub polling 종료가 EC2의 실행 취소를 뜻하지 않는다.
+
+## Prod Deployment (OCI)
+
+`main` push(앱 이미지 입력 경로만) → `deploy-oci.yml` → host `laimory-deploy`. 순서·복귀·host 구조 계약·설치는
+[OCI 배포 README](../../../../deploy/oci/deploy/README.md)가 소유한다. 저장소 자산의 존재가 host 설치·활성화를 뜻하지 않는다 —
+host 설치, GitHub Environment `prod`, Tailscale identity, blue/green 구조 전환이 모두 끝나야 동작한다(실제 상태는 live가 권위).
+
+- 빌드는 `ubuntu-24.04-arm`, 이미지는 GHCR 공개 패키지이고 host는 digest로 받아 revision label을 요청 SHA와 대조한다.
+- 접속은 GitHub OIDC 기반 Tailscale 임시 기기(`tag:ci`, OCI 22번만)와 forced command다. CI가 host에서 할 수 있는 일은
+  저장소별로 고정된 서비스(api 또는 ai)에 "이 SHA·digest 이미지를 배포"하는 것뿐이다.
+- 교체는 blue/green이다. 새 색이 정상일 때만 nginx upstream을 옮기고, 실제로 새 색이 응답함을 확인한 뒤 옛 색을 정상 종료한다.
+  실패하면 옛 색이 계속 서빙한다. 배포 본체는 systemd unit이라 SSH가 끊겨도 완주한다.
+- 전환 동안 api 두 개가 함께 돈다(약 1분). OCI는 `SERVER_COUNT=1`이라 03:30 고아 정리·04:00 draft 정리가 겹치면 같은 행을
+  동시에 지우고, 21:00 리마인더는 정지 중 발송이 유실될 수 있어 KST 02:25~04:50·20:55~21:10에는 배포를 시작하지 않는다.
+  스케줄 cron을 바꾸면 `laimory-deploy`의 창도 함께 고친다.
+- Flyway migration은 새 색이 기동할 때 적용된다. 옛 색이 함께 서빙하므로 구 앱 호환 migration 원칙은 그대로다.
+- `DEPLOY_PAUSED=true`는 push 빌드·배포를 건너뛴다. `workflow_dispatch`(`build-only`·`deploy`)는 통과한다.
+- host의 compose·nginx·Alloy 파일은 자동 반영하지 않는다(사람이 머지된 커밋의 파일을 설치).
 
 ## Monitoring Alert Rule Deployment
 
@@ -315,7 +333,7 @@ application deploy run이 0건인지 확인한다.
 
 ## Known Gaps
 
-- prod(OCI) 자동 배포 경로가 없다(#669).
+- prod는 단일 OCI host다. blue/green은 배포 중단만 없애고 host 장애에는 전체가 멈춘다.
 - 단일 host dev/test는 무중단 구성이 아니며 automatic rollback도 없다. 전체 외부 의존성 readiness check는 없다.
 - HTTP drain은 background 작업의 완료/재시도 계약을 대신하지 않는다.
 
@@ -329,6 +347,7 @@ manual operation 경계가 바뀔 때 갱신한다.
 ```bash
 ./gradlew build
 docker build -t laimory:local .
+bash .github/scripts/test-oci-deploy-contract.sh
 .github/scripts/test-deploy-contract.sh
 .github/scripts/test-monitoring-deploy-contract.sh
 git diff --check
