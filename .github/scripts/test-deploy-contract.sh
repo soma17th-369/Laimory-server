@@ -54,7 +54,8 @@ ruby -ryaml -e '
   end
   wf = load_yaml.call(ARGV[0])
   triggers = wf["on"] || wf[true]
-  abort "dev/main/test push trigger missing" unless triggers.dig("push", "branches") == ["dev", "main", "test"]
+  # prod는 AWS에 배포하지 않는다. main이 trigger에 돌아오면 AWS host가 OCI DB를 보는 채로 배포될 수 있다.
+  abort "push trigger must be exactly dev/test (main must not deploy to AWS)" unless triggers.dig("push", "branches") == ["dev", "test"]
   expected_paths = [
     ".github/workflows/deploy.yml",
     ".dockerignore",
@@ -78,18 +79,16 @@ ruby -ryaml -e '
   dispatch_env = triggers.dig("workflow_dispatch", "inputs", "environment")
   abort "workflow_dispatch environment input missing" unless dispatch_env
   abort "environment input must be required" unless dispatch_env["required"] == true
-  abort "environment input must be a choice of dev/prod/test" unless dispatch_env["options"] == ["dev", "prod", "test"]
+  abort "environment input must be a choice of dev/test" unless dispatch_env["options"] == ["dev", "test"]
   abort "environment input must not have a default" if dispatch_env.key?("default")
-  selection = triggers.dig("workflow_dispatch", "inputs", "deploy_target")
-  abort "manual host choices missing" unless selection && selection["options"] == ["all", "host-1", "host-2"] && selection["default"] == "all"
   abort "running deployments must not be cancelled" unless wf.dig("concurrency", "cancel-in-progress") == false
-  abort "concurrency must remain environment-wide" unless wf.dig("concurrency", "group").to_s.include?("inputs.environment") && !wf.dig("concurrency", "group").to_s.include?("deploy_target")
+  abort "concurrency must remain environment-wide" unless wf.dig("concurrency", "group").to_s.include?("inputs.environment")
   push_only = "github.event_name == #{q}push#{q}"
   dispatch_only = "github.event_name == #{q}workflow_dispatch#{q}"
   gate_true = "steps.gate.outputs.deploy == #{q}true#{q}"
   steps = wf["jobs"]["deploy"]["steps"]
-  # 환경 결정의 단일 지점 계약: 배포 role이 dev/prod 인스턴스를 모두 허용하게 된 뒤로는 이 분기가
-  # prod 오배포를 막는 유일한 방어선이라, 판단이 여러 step으로 흩어지면 안 된다.
+  # 환경 결정의 단일 지점 계약: 배포 role은 prod 인스턴스도 허용하므로 이 분기가 다른 환경으로의
+  # 오배포를 막는 유일한 방어선이다. 판단이 여러 step으로 흩어지면 안 된다.
   resolve = steps.find { |s| s["id"] == "env" }
   abort "resolve deploy environment step missing" unless resolve
   resolve_run = resolve["run"].to_s
@@ -100,12 +99,11 @@ ruby -ryaml -e '
   # repository Variable은 마스킹되지 않아 PUBLIC 저장소의 공개 워크플로 로그에 instance id가 남는다.
   # Secret은 ***로 마스킹되므로 vars.로 되돌아가는 회귀를 여기서 함께 막는다.
   {"DEV_INSTANCE_ID" => resolve.dig("env", "DEV_INSTANCE_ID").to_s,
-   "PROD_INSTANCE_IDS" => resolve.dig("env", "PROD_INSTANCE_IDS").to_s,
-   "TEST_INSTANCE_ID" => resolve.dig("env", "TEST_INSTANCE_ID").to_s,
-   "PROD_TARGET_GROUP_ARN" => resolve.dig("env", "PROD_TARGET_GROUP_ARN").to_s}.each do |key, expr|
+   "TEST_INSTANCE_ID" => resolve.dig("env", "TEST_INSTANCE_ID").to_s}.each do |key, expr|
     abort "resolve step must read #{key} from repository secrets" unless expr.include?("secrets.#{key}")
     abort "resolve step must not read #{key} from an unmasked repository variable" if expr.include?("vars.")
   end
+  abort "workflow must not read prod instance or target group secrets" if File.read(ARGV[0], encoding: "UTF-8").match?(/secrets\.PROD_/)
   # 배포 role은 환경별로 갈린다(#400). ARN은 비밀이 아니라 Variable이 맞고(로그에 보여야 진단이 된다),
   # 선택은 resolve 한 곳만 한다 — OIDC step이 vars를 직접 읽으면 결정 지점이 둘이 된다.
   {"AWS_DEPLOY_ROLE_ARN" => resolve.dig("env", "AWS_DEPLOY_ROLE_ARN").to_s,
@@ -119,12 +117,11 @@ ruby -ryaml -e '
   abort "OIDC step must not pick a role variable itself" if oidc.dig("with", "role-to-assume").to_s.include?("vars.")
   abort "resolve step must fail closed on an unknown environment" unless resolve_run.include?("unknown deploy environment")
   abort "resolve step must fail closed on empty instance ids" unless resolve_run.include?("no instance ids configured")
-  # harness는 아래 값들을 그대로 재현해 원격 script를 세 벌로 확장한다
-  # (dev_runner_env/prod_runner_env/test_runner_env).
+  # harness는 아래 값들을 그대로 재현해 원격 script를 두 벌로 확장한다(dev_runner_env/test_runner_env).
   # workflow 쪽만 바뀌고 harness가 모르면 검증이 실물과 갈리므로 여기서 묶어둔다.
-  ["EXPECT_APP_ENV=dev", "EXPECT_APP_ENV=prod", "EXPECT_APP_ENV=test",
-   "EXPECT_REDIS_KEY_PREFIX=dev_", "EXPECT_REDIS_KEY_PREFIX=", "EXPECT_REDIS_KEY_PREFIX=test_",
-   "EXPECT_SWAGGER_ENABLED=true", "EXPECT_SWAGGER_ENABLED=false",
+  ["EXPECT_APP_ENV=dev", "EXPECT_APP_ENV=test",
+   "EXPECT_REDIS_KEY_PREFIX=dev_", "EXPECT_REDIS_KEY_PREFIX=test_",
+   "EXPECT_SWAGGER_ENABLED=true",
    "EXPECT_APP_GEO_MODE=kakao"].each do |pair|
     abort "resolve step must define #{pair} (harness reproduces these values)" unless resolve_run.include?(pair)
   end
@@ -192,22 +189,18 @@ ruby -ryaml -e '
 ok "T0: pause gate, deploy-existing dispatch and build-only workflow contract"
 
 # --- 1a. T0b: branch → environment 매핑을 실제로 실행해 검증한다 ---
-# 문자열 존재 검사로는 if/elif 본문이 뒤바뀌어도(main→dev) 통과한다. 배포 role이 두 환경의 instance를
-# 모두 허용하게 된 뒤로는 이 매핑이 prod 오배포를 막는 유일한 지점이라 값으로 확인해야 한다.
+# 문자열 존재 검사로는 if/elif 본문이 뒤바뀌어도(test→dev) 통과하므로 값으로 확인해야 한다.
 FAKE_DEV_ID="i-dev00000000000001"
-FAKE_PROD_IDS="i-prod0000000000001 i-prod0000000000002"
 FAKE_TEST_ID="i-test0000000000001"
 FAKE_ROLE_ARN="arn:aws:iam::000000000000:role/fixture-deploy"
 FAKE_TEST_ROLE_ARN="arn:aws:iam::000000000000:role/fixture-deploy-test"
 run_resolve() {
-  # $1 event, $2 ref, $3 dispatch environment, $4(선택) PROD_INSTANCE_IDS override,
+  # $1 event, $2 ref, $3 dispatch environment, $4(선택) DEV_INSTANCE_ID override,
   # $5(선택) TEST_INSTANCE_ID override
   RESOLVE_OUT="$WORK/resolve_output"; : > "$RESOLVE_OUT"
   RESOLVE_LOG="$WORK/resolve.log"
   env "GITHUB_EVENT_NAME=$1" "GITHUB_REF_NAME=$2" "DISPATCH_ENVIRONMENT=$3" \
-      "DEV_INSTANCE_ID=$FAKE_DEV_ID" "PROD_INSTANCE_IDS=${4-$FAKE_PROD_IDS}" \
-      "TEST_INSTANCE_ID=${5-$FAKE_TEST_ID}" "DISPATCH_TARGET=${6:-all}" \
-      "PROD_TARGET_GROUP_ARN=arn:aws:elasticloadbalancing:ap-test-1:000000000000:targetgroup/fixture/1234567890123456" \
+      "DEV_INSTANCE_ID=${4-$FAKE_DEV_ID}" "TEST_INSTANCE_ID=${5-$FAKE_TEST_ID}" \
       "AWS_DEPLOY_ROLE_ARN=$FAKE_ROLE_ARN" "AWS_TEST_DEPLOY_ROLE_ARN=$FAKE_TEST_ROLE_ARN" \
       "GITHUB_OUTPUT=$RESOLVE_OUT" \
       /bin/bash "$WORK/resolve_run.sh" > "$RESOLVE_LOG" 2>&1
@@ -226,14 +219,6 @@ assert_resolved "dev push" "expect_redis_key_prefix=dev_"
 assert_resolved "dev push" "expect_swagger_enabled=true"
 assert_resolved "dev push" "role_arn=$FAKE_ROLE_ARN"
 
-run_resolve push main ""
-[ "$RESOLVE_RC" = "0" ] || fail "T0b(main push): resolve must succeed"
-assert_resolved "main push" "environment=prod"
-assert_resolved "main push" "expect_app_env=prod"
-assert_resolved "main push" "expect_redis_key_prefix="
-assert_resolved "main push" "expect_swagger_enabled=false"
-assert_resolved "main push" "role_arn=$FAKE_ROLE_ARN"
-
 # test push(#400): GITHUB_REF_NAME은 러너에서 branch 이름 그대로다 — 'test'를 넣는다.
 run_resolve push test ""
 [ "$RESOLVE_RC" = "0" ] || fail "T0b(test push): resolve must succeed"
@@ -244,11 +229,9 @@ assert_resolved "test push" "expect_swagger_enabled=true"
 assert_resolved "test push" "host_count=1"
 assert_resolved "test push" "role_arn=$FAKE_TEST_ROLE_ARN"
 
-# 수동 실행은 branch가 아니라 입력이 이긴다(main에서 dev를 고를 수도, dev에서 prod를 고를 수도 있다).
+# 수동 실행은 branch가 아니라 입력이 이긴다(main에서 dev를 고를 수도 있다).
 run_resolve workflow_dispatch main dev
 assert_resolved "dispatch dev from main" "environment=dev"
-run_resolve workflow_dispatch refs/heads/dev prod
-assert_resolved "dispatch prod from dev" "environment=prod"
 
 # test 수동 배포(#400)는 test ref에서만 — test role의 OIDC trust가 refs/heads/test뿐이라,
 # 다른 ref의 dispatch는 자격증명 단계의 불투명한 실패 대신 resolve에서 원인을 말하고 끊는다.
@@ -262,19 +245,22 @@ grep -q "must be dispatched from the test branch ref" "$RESOLVE_LOG" \
   || fail "T0b(dispatch test guard): ref-guard diagnostic expected"
 
 # fail-closed: 알 수 없는 환경 / 빈 목록 / 개수 불일치
-run_resolve workflow_dispatch main staging
-[ "$RESOLVE_RC" != "0" ] || fail "T0b(unknown env): resolve must fail closed"
-run_resolve push main "" ""
-[ "$RESOLVE_RC" != "0" ] || fail "T0b(empty prod ids): resolve must fail closed"
-run_resolve push main "" "i-prod0000000000001"
-[ "$RESOLVE_RC" != "0" ] || fail "T0b(truncated prod ids): resolve must fail closed on host count"
-grep -q "expects 2 host(s)" "$RESOLVE_LOG" || fail "T0b(truncated prod ids): host count diagnostic expected"
-run_resolve push test "" "$FAKE_PROD_IDS" ""
+for unknown in staging prod; do
+  run_resolve workflow_dispatch main "$unknown"
+  [ "$RESOLVE_RC" != "0" ] || fail "T0b(unknown env $unknown): resolve must fail closed"
+  grep -q "unknown deploy environment: '$unknown'" "$RESOLVE_LOG" || fail "T0b(unknown env $unknown): diagnostic expected"
+done
+run_resolve push dev "" ""
+[ "$RESOLVE_RC" != "0" ] || fail "T0b(empty dev id): resolve must fail closed"
+run_resolve push dev "" "i-dev00000000000001 i-dev00000000000002"
+[ "$RESOLVE_RC" != "0" ] || fail "T0b(extra dev id): resolve must fail closed on host count"
+grep -q "expects 1 host(s)" "$RESOLVE_LOG" || fail "T0b(extra dev id): host count diagnostic expected"
+run_resolve push test "" "$FAKE_DEV_ID" ""
 [ "$RESOLVE_RC" != "0" ] || fail "T0b(empty test id): resolve must fail closed"
 
 # 저장소가 PUBLIC이고 Actions 로그도 공개다. instance id를 stdout에 싣지 않는다.
-run_resolve push main ""
-if grep -qE 'i-(dev|prod|test)[0-9]+' "$RESOLVE_LOG"; then
+run_resolve push dev ""
+if grep -qE 'i-(dev|test)[0-9]+' "$RESOLVE_LOG"; then
   fail "T0b(log hygiene): instance ids must not be printed to the workflow log"
 fi
 ok "T0b: branch/dispatch -> environment mapping resolves by value and fails closed"
@@ -291,15 +277,11 @@ grep -q 'trap cleanup EXIT' "$WORK/remote_body.raw" || fail "extracted body miss
   echo 'EOF'
   echo 'printf "%s\n" "$SCRIPT"'
 } > "$WORK/driver.sh"
-# 환경 파생값은 러너의 Resolve 단계가 넣는다. 여기서는 그 단계가 dev/prod에 대해 내놓는 값을
+# 환경 파생값은 러너의 Resolve 단계가 넣는다. 여기서는 그 단계가 dev/test에 대해 내놓는 값을
 # 그대로 재현해 두 벌로 확장한다 — 확장 결과가 갈리는 지점이 곧 환경 분기의 전부여야 한다.
 dev_runner_env() {
   echo "ENVIRONMENT=dev"; echo "EXPECT_APP_ENV=dev"; echo "EXPECT_REDIS_KEY_PREFIX=dev_"
   echo "EXPECT_SWAGGER_ENABLED=true"; echo "EXPECT_APP_GEO_MODE=kakao"
-}
-prod_runner_env() {
-  echo "ENVIRONMENT=prod"; echo "EXPECT_APP_ENV=prod"; echo "EXPECT_REDIS_KEY_PREFIX="
-  echo "EXPECT_SWAGGER_ENABLED=false"; echo "EXPECT_APP_GEO_MODE=kakao"
 }
 test_runner_env() {
   echo "ENVIRONMENT=test"; echo "EXPECT_APP_ENV=test"; echo "EXPECT_REDIS_KEY_PREFIX=test_"
@@ -368,33 +350,24 @@ mkdir -p "$STUB"
 cat > "$STUB/docker" <<'STUBEOF'
 #!/usr/bin/env bash
 echo "docker $*" >> "${DOCKER_LOG:?}"
-if [ -n "${FAKE_DOCKER_STATE:-}" ]; then
-  exec python3 "$REMOTE_DOCKER_MODEL" "$@"
-fi
 case "$1" in
   login) cat >/dev/null 2>&1 || true; exit "${FAKE_LOGIN_EXIT:-0}" ;;
   pull)
-    [ "${FAKE_PULL_EXIT:-0}" = "0" ] || exit "$FAKE_PULL_EXIT"
-    [ -z "${FAKE_DOCKER_STATE:-}" ] || touch "$FAKE_DOCKER_STATE/image"
-    exit 0 ;;
+    exit "${FAKE_PULL_EXIT:-0}" ;;
   container)
-    if [ -z "${FAKE_DOCKER_STATE:-}" ] || [ -f "$FAKE_DOCKER_STATE/container" ]; then echo fixture-container; fi
+    echo fixture-container
     exit "${FAKE_DOCKER_LIST_EXIT:-0}" ;;
   inspect)
     case "$*" in
       *Running*)
-        if [ -z "${FAKE_DOCKER_STATE:-}" ] || [ -f "$FAKE_DOCKER_STATE/running" ]; then echo true; else echo false; fi ;;
+        echo true ;;
       *ExitCode*) echo "${FAKE_CONTAINER_EXIT:-0}" ;;
     esac
     exit 0 ;;
   stop)
-    [ "${FAKE_STOP_EXIT:-0}" = "0" ] || exit "$FAKE_STOP_EXIT"
-    [ -z "${FAKE_DOCKER_STATE:-}" ] || rm -f "$FAKE_DOCKER_STATE/running"
-    exit 0 ;;
+    exit "${FAKE_STOP_EXIT:-0}" ;;
   rm)
-    [ "${FAKE_REMOVE_EXIT:-0}" = "0" ] || exit "$FAKE_REMOVE_EXIT"
-    [ -z "${FAKE_DOCKER_STATE:-}" ] || rm -f "$FAKE_DOCKER_STATE/container" "$FAKE_DOCKER_STATE/new-container"
-    exit 0 ;;
+    exit "${FAKE_REMOVE_EXIT:-0}" ;;
   run)
     # subject schema preflight의 mysql:8.0 one-shot run은 UID check와 별도 seam으로 제어한다.
     # 성공 시 schema 질의의 exact-shape 판정(기본 1)만 stdout으로 낸다 — row/값 출력 없음.
@@ -407,17 +380,8 @@ case "$1" in
         exit "${FAKE_MYSQL_EXIT:-0}" ;;
     esac
     if [ "$2" = "--rm" ]; then exit "${FAKE_UID_CHECK_EXIT:-0}"; fi
-    if [ -n "${FAKE_DOCKER_STATE:-}" ]; then
-      [ -f "$FAKE_DOCKER_STATE/image" ] || { echo "fixture: prepared image missing" >&2; exit 1; }
-      [ "${FAKE_RUN_EXIT:-0}" = "0" ] || exit "$FAKE_RUN_EXIT"
-      touch "$FAKE_DOCKER_STATE/container" "$FAKE_DOCKER_STATE/new-container" "$FAKE_DOCKER_STATE/running"
-    fi
     exit "${FAKE_RUN_EXIT:-0}" ;;
   image)
-    if [ "$2" = "inspect" ]; then
-      [ -z "${FAKE_DOCKER_STATE:-}" ] || [ -f "$FAKE_DOCKER_STATE/image" ]; exit $?
-    fi
-    if [ -n "${FAKE_DOCKER_STATE:-}" ] && [ ! -f "$FAKE_DOCKER_STATE/new-container" ]; then rm -f "$FAKE_DOCKER_STATE/image"; fi
     exit "${FAKE_PRUNE_EXIT:-0}" ;;
   *) exit 0 ;;
 esac
@@ -669,54 +633,7 @@ for key in REDIS_KEY_PREFIX APP_ENV APP_ADMIN_PORT APP_GEO_MODE SWAGGER_ENABLED 
 done
 ok "T5b: fixed dev keys, APP_AI_MODE and subject mode/ARN fail closed on missing/wrong/duplicate lines"
 
-# --- 9a. T5f: 환경 분기 계약(#337) — prod 확장이 prod 기대값을 박고,
-# 환경이 섞이면(prod script + dev .env) 구 컨테이너 중지 전에 fail-closed한다.
-# 고정값이 리터럴에서 러너 변수로 내려갔으므로, "환경별로 정확히 이 지점만 갈린다"를 여기서 고정한다. ---
-expand_script prod_runner_env "$WORK/remote_prod_script.sh" \
-  "GITHUB_EVENT_NAME=push" "IMG=registry.test/laimory:$FAKE_SHA" || fail "T5f: prod heredoc expansion"
-PROD_SCRIPT_FILE="$WORK/remote_prod_script.sh"
-
-grep -qF 'require_exact_line APP_ENV "APP_ENV=prod"' "$PROD_SCRIPT_FILE" \
-  || fail "T5f: prod script must require APP_ENV=prod"
-grep -qF 'require_exact_line REDIS_KEY_PREFIX "REDIS_KEY_PREFIX="' "$PROD_SCRIPT_FILE" \
-  || fail "T5f: prod script must require an empty Redis key prefix"
-grep -qF 'require_exact_line SWAGGER_ENABLED "SWAGGER_ENABLED=false"' "$PROD_SCRIPT_FILE" \
-  || fail "T5f: prod script must require SWAGGER_ENABLED=false"
-grep -qF 'require_exact_line OTEL_SERVICE_NAME "OTEL_SERVICE_NAME=laimory-prod"' "$PROD_SCRIPT_FILE" \
-  || fail "T5f: prod OTel service name must not stay the dev literal"
-
-prod_env_fixture() {
-  base_env_fixture
-  PATH=/usr/bin:/bin sed -i.bak \
-    -e 's/^REDIS_KEY_PREFIX=dev_$/REDIS_KEY_PREFIX=/' \
-    -e 's/^APP_ENV=dev$/APP_ENV=prod/' \
-    -e 's/^SWAGGER_ENABLED=true$/SWAGGER_ENABLED=false/' "$CASE_DIR/.env"
-  rm -f "$CASE_DIR/.env.bak"
-  cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
-}
-
-DEV_SCRIPT_FILE="$SCRIPT_FILE"
-SCRIPT_FILE="$PROD_SCRIPT_FILE"
-
-# 환경 혼선: prod로 보내는 script에 dev host의 .env가 걸리면 배포가 진행되면 안 된다.
-new_case; base_env_fixture
-execute_script
-[ "$RC" != "0" ] || fail "T5f(cross): prod script must reject a dev .env"
-grep -q "PREFLIGHT FAILED: .env REDIS_KEY_PREFIX" "$CASE_DIR/out.log" || fail "T5f(cross): key-only diagnostic expected"
-assert_env_untouched "T5f(cross)"
-assert_no_stop_no_run "T5f(cross)"
-assert_prune_once "T5f(cross)"
-assert_no_sentinel "T5f(cross)"
-
-# prod 정상 경로: prod 기대값 fixture로 배포가 끝까지 성공해야 한다.
-new_case; prod_env_fixture
-execute_script
-[ "$RC" = "0" ] || fail "T5f(prod): success expected, rc=$RC"
-grep -q '^docker run -d' "$CASE_DIR/docker.log" || fail "T5f(prod): container must start"
-assert_sha_line "T5f(prod)"
-assert_no_sentinel "T5f(prod)"
-
-# --- 9b. T5g(#400): test 확장 — 세 번째 환경의 기대값이 러너 변수로 정확히 박히고,
+# --- 9b. T5g(#400): 환경 분기 — test 확장의 기대값이 러너 변수로 정확히 박히고,
 # 환경이 섞이면(test script + dev .env) fail-closed하며, test 기대값 fixture로는 끝까지 성공한다. ---
 expand_script test_runner_env "$WORK/remote_test_script.sh" \
   "GITHUB_EVENT_NAME=push" "IMG=registry.test/laimory:$FAKE_SHA" || fail "T5g: test heredoc expansion"
@@ -741,6 +658,7 @@ test_env_fixture() {
   cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
 }
 
+DEV_SCRIPT_FILE="$SCRIPT_FILE"
 SCRIPT_FILE="$TEST_SCRIPT_FILE"
 
 # 환경 혼선: test로 보내는 script에 dev host의 .env가 걸리면 배포가 진행되면 안 된다.
@@ -750,6 +668,8 @@ execute_script
 grep -q "PREFLIGHT FAILED: .env REDIS_KEY_PREFIX" "$CASE_DIR/out.log" || fail "T5g(cross): key-only diagnostic expected"
 assert_env_untouched "T5g(cross)"
 assert_no_stop_no_run "T5g(cross)"
+assert_prune_once "T5g(cross)"
+assert_no_sentinel "T5g(cross)"
 
 # test 정상 경로: test 기대값 fixture로 배포가 끝까지 성공해야 한다.
 new_case; test_env_fixture
@@ -770,8 +690,7 @@ for value in '' 8081 0; do
 done
 
 SCRIPT_FILE="$DEV_SCRIPT_FILE"
-ok "T5f: env branch pins per-environment expectations and fails closed on mixed environments"
-ok "T5g: test environment expansion pins test expectations and deploys cleanly"
+ok "T5g: test expansion pins test expectations, fails closed on a mixed environment and deploys cleanly"
 
 # --- 10. T5b(http): base URL 필수 계약 ---
 for mutation in missing empty dup ; do
@@ -1199,548 +1118,51 @@ grep -q "WARNING: docker image prune failed (deploy status unchanged)" "$CASE_DI
   || fail "T10: fixed prune warning expected"
 ok "T9/T10: prune result never masks the deploy status (0 stays 0, 3 stays 3)"
 
-# --- 16. #484: 실제 runner + remote 본문을 연결해 ALB/SSM 순서와 복구를 검증한다 ---
-# AWS만 모사하고 send-command가 production remote script를 실제 실행한다.
-# Docker fixture는 image/container 참조를 기억하므로 prepare의 잘못된 prune도 검출한다.
-# 두 컨테이너의 실제 runtime env/image/mount를 별도로 보존하여 rollback의 복원 대상을 검증한다.
-cat > "$WORK/docker-model.py" <<'PYEOF'
-import json
-import os
-from pathlib import Path
-import sys
+# --- 16. T11: 기존 container 종료·제거 실패와 readiness 실패는 새 container를 성공으로 만들지 않는다 ---
+for injection in FAKE_CONTAINER_EXIT=137 FAKE_STOP_EXIT=7 FAKE_REMOVE_EXIT=9 FAKE_DOCKER_LIST_EXIT=5; do
+  new_case; base_env_fixture
+  execute_script "$injection"
+  [ "$RC" != "0" ] || fail "T11($injection): failure expected"
+  ! grep -q '^docker run -d' "$CASE_DIR/docker.log" || fail "T11($injection): must not start the new container"
+  assert_prune_once "T11($injection)"
+done
+new_case; base_env_fixture
+execute_script "FAKE_READINESS_EXIT=22"
+[ "$RC" = "1" ] || fail "T11(readiness): readiness failure must exit 1 even when intro answers, rc=$RC"
+ok "T11: failed stop/SIGKILL/remove never starts the new container; readiness alone can fail the deploy"
 
-args = sys.argv[1:]
-root = Path(os.environ['FAKE_DOCKER_STATE'])
-path = root / 'containers.json'
-containers = json.loads(path.read_text())
-
-def injected(key):
-    code = int(os.environ.get(key, '0'))
-    if code:
-        sys.exit(code)
-
-def save():
-    path.write_text(json.dumps(containers))
-
-op = args[0]
-if op == 'login':
-    sys.stdin.read()
-    injected('FAKE_LOGIN_EXIT')
-elif op == 'pull':
-    injected('FAKE_PULL_EXIT')
-    (root / 'image').touch()
-elif op == 'container':
-    injected('FAKE_DOCKER_LIST_EXIT')
-    name = args[-1].removeprefix('name=^/').removesuffix('$')
-    if name in containers:
-        print(containers[name]['id'])
-elif op == 'inspect':
-    item = containers[args[-1]]
-    fmt = args[args.index('--format') + 1]
-    if '.State.Running' in fmt:
-        print(str(item['running']).lower())
-    elif '.State.ExitCode' in fmt:
-        print(item.get('exitCode', 0))
-    elif '.Config.Env' in fmt:
-        print(json.dumps(item['env']))
-    else:
-        raise AssertionError('unexpected inspect format')
-elif op == 'rename':
-    old, new = args[1:]
-    assert new not in containers, 'container name already exists'
-    containers[new] = containers.pop(old)
-    save()
-elif op == 'stop':
-    injected('FAKE_STOP_EXIT')
-    containers[args[-1]]['running'] = False
-    containers[args[-1]]['exitCode'] = int(os.environ.get('FAKE_CONTAINER_EXIT', '0'))
-    save()
-elif op == 'rm':
-    injected('FAKE_REMOVE_EXIT')
-    assert not containers[args[-1]]['running'], 'cannot remove a running container'
-    del containers[args[-1]]
-    save()
-elif op == 'start':
-    injected('FAKE_START_EXIT')
-    containers[args[-1]]['running'] = True
-    containers[args[-1]]['exitCode'] = 0
-    save()
-elif op == 'run':
-    if 'mysql:8.0' in args:
-        if 'SELECT COUNT(*) FROM app_config' in args:
-            injected('FAKE_APP_CONFIG_EXIT')
-            print(os.environ.get('FAKE_APP_CONFIG_COUNT', '1'))
-        else:
-            injected('FAKE_MYSQL_EXIT')
-            print(os.environ.get('FAKE_MYSQL_OUTPUT', '1'))
-    elif '--rm' in args:
-        injected('FAKE_UID_CHECK_EXIT')
-    else:
-        assert (root / 'image').exists(), 'prepared image missing'
-        injected('FAKE_RUN_EXIT')
-        assert 'laimory' not in containers, 'container name already exists'
-        env_file = Path(args[args.index('--env-file') + 1])
-        containers['laimory'] = dict(id='new-container', image=args[-1], running=True,
-            env=[line for line in env_file.read_text().splitlines() if line and not line.startswith('#')],
-            mounts=[args[i+1] for i, a in enumerate(args) if a == '-v'])
-        save()
-elif op == 'image':
-    if args[1] == 'inspect':
-        sys.exit(0 if (root / 'image').exists() else 1)
-    injected('FAKE_PRUNE_EXIT')
-    if not any(item['id'] == 'new-container' for item in containers.values()):
-        (root / 'image').unlink(missing_ok=True)
-else:
-    assert op == 'logs', 'unexpected Docker operation'
-PYEOF
-
+# --- 17. T12: runner는 SSM 결과를 그대로 workflow 성공·실패로 옮기고 instance id를 로그에 남기지 않는다 ---
 RUNNER_STUB="$WORK/runner-stub"; mkdir -p "$RUNNER_STUB"
-cat > "$RUNNER_STUB/aws" <<'PYEOF'
-#!/usr/bin/env python3
-import json
-import os
-from pathlib import Path
-import subprocess
-import sys
-
-args = sys.argv[1:]
-root = Path(os.environ['ROLL_DIR'])
-state_path = root / 'state.json'
-state = json.loads(state_path.read_text())
-ids = os.environ['INSTANCE_IDS'].replace(',', ' ').split()
-failure = os.environ.get('ROLL_FAIL', '')
-
-def arg(name, default=None):
-    return args[args.index(name) + 1] if name in args else default
-
-def save():
-    state_path.write_text(json.dumps(state))
-
-def event(action, host):
-    with (root / 'events').open('a') as f:
-        f.write(f'{action} {host}\n')
-
-def target_host():
-    target = arg('--targets')
-    assert target.endswith(',Port=8080'), 'unexpected target port'
-    return str(ids.index(target.split(',')[0].split('=', 1)[1]) + 1)
-
-if args[:2] == ['ssm', 'send-command']:
-    iid = arg('--instance-ids')
-    assert iid in ids
-    host = str(ids.index(iid) + 1)
-    params = json.loads(Path(arg('--parameters').removeprefix('file://')).read_text())
-    assert params['executionTimeout'] == ['900']
-    script = params['commands'][0]
-    phase = script.splitlines()[0].split('=', 1)[1]
-    event(phase, host)
-    if failure == f'send-{phase}-{host}' or (phase == 'rollback' and failure == 'rollback-send') or (phase == 'retry' and failure == 'retry-send'):
-        sys.exit(1)
-    directory = root / f'host-{host}'
-    env = dict(os.environ, PATH=os.environ['REMOTE_STUB']+':'+os.environ['PATH'],
-               LAIMORY_ENV_FILE=str(directory/'.env'), LAIMORY_FCM_CRED_FILE=str(directory/'cred.json'),
-               DOCKER_LOG=str(directory/'docker.log'), CHOWN_LOG=str(directory/'chown.log'),
-               FAKE_DOCKER_STATE=str(directory))
-    injected = {'prepare': ('FAKE_PULL_EXIT','7'), 'replace': ('FAKE_RUN_EXIT','7'),
-                'readiness': ('FAKE_READINESS_EXIT','22'), 'stop': ('FAKE_STOP_EXIT','7'),
-                'killed': ('FAKE_CONTAINER_EXIT','137'), 'upsert': ('FAKE_MV_FAIL','1'),
-                'cleanup': ('FAKE_PRUNE_EXIT','7')}
-    for label, (key, value) in injected.items():
-        expected_phase = 'replace' if label in ('readiness','stop','killed','upsert') else label
-        failure_key = f'remote-{label}-{host}'
-        if phase == expected_phase and failure == f'{label}-{host}' and failure_key not in state.setdefault('failed', []):
-            state['failed'].append(failure_key)
-            env[key] = value
-    if failure.startswith('rollback-') and host == '1':
-        if phase == 'replace':
-            if failure == 'rollback-stop':
-                env['FAKE_READINESS_EXIT'] = '22'
-            else:
-                env['FAKE_RUN_EXIT'] = '7'
-        if phase == 'rollback' and failure == 'rollback-start':
-            env['FAKE_START_EXIT'] = '7'
-        if phase == 'rollback' and failure == 'rollback-readiness':
-            env['FAKE_READINESS_EXIT'] = '22'
-        if phase == 'rollback' and failure == 'rollback-stop':
-            env['FAKE_STOP_EXIT'] = '7'
-    if failure.startswith('retry-') and host == '2':
-        if phase == 'prepare' and failure == 'retry-prepare':
-            env['FAKE_PULL_EXIT'] = '7'
-        if phase == 'replace':
-            if failure in ('retry-stop', 'retry-killed'):
-                env['FAKE_READINESS_EXIT'] = '22'
-            else:
-                env['FAKE_RUN_EXIT'] = '7'
-        retry_failures = {'retry-run': ('FAKE_RUN_EXIT', '7'),
-                          'retry-readiness': ('FAKE_READINESS_EXIT', '22'),
-                          'retry-stop': ('FAKE_STOP_EXIT', '7'),
-                          'retry-killed': ('FAKE_CONTAINER_EXIT', '137'),
-                          'retry-upsert': ('FAKE_MV_FAIL', '1')}
-        if phase == 'retry' and failure in retry_failures:
-            key, value = retry_failures[failure]
-            env[key] = value
-    result = subprocess.run(['/bin/bash', '-c', script], env=env, text=True, capture_output=True)
-    status = 'Success' if result.returncode == 0 else 'Failed'
-    if failure == f'uncertain-{phase}-{host}' or (phase == 'rollback' and failure == 'rollback-uncertain') or (phase == 'retry' and failure == 'retry-uncertain'):
-        status = 'TimedOut'
-    cmd_id = f'command-{len(state["commands"])+1}'
-    state['commands'][cmd_id] = {'host': host, 'phase': phase, 'Status': status, 'StandardOutputContent': result.stdout,
-                                  'StandardErrorContent': result.stderr}
-    save()
-    print(cmd_id)
-elif args[:2] == ['ssm', 'get-command-invocation']:
-    print(state['commands'][arg('--command-id')][arg('--query')])
-elif args[:2] == ['elbv2', 'describe-target-groups']:
-    group = dict(TargetType='instance', Protocol='HTTP', Port=8080, HealthCheckEnabled=True,
-                 HealthCheckProtocol='HTTP', HealthCheckPort='traffic-port', HealthCheckPath='/readyz',
-                 Matcher={'HttpCode':'200'}, LoadBalancerArns=['fixture-alb'])
-    if failure == 'wrong-group':
-        group['HealthCheckPath']='/wrong'
-    print(json.dumps({'TargetGroups':[group]}))
-elif args[:2] == ['elbv2', 'describe-target-health']:
-    if '--targets' in args:
-        host = target_host()
-        event('peer', host)
-        prior_replace = any('replace' in c.get('phase', '') for c in state['commands'].values())
-        retrying_second = any(c['host'] == '2' and c['phase'] == 'replace' for c in state['commands'].values())
-        print('unhealthy' if failure == f'peer-{host}' or (failure == 'rollback-peer' and prior_replace) or (failure == 'retry-peer' and retrying_second) else state['health'][host])
-    else:
-        targets = [{'Target':{'Id':iid, 'Port':8080}, 'TargetHealth':{'State':state['health'][str(i+1)]}}
-                   for i, iid in enumerate(ids) if state['health'][str(i+1)] != 'unused']
-        if failure == 'foreign-target':
-            targets.append({'Target':{'Id':'i-foreign', 'Port':8080}})
-        print(json.dumps({'TargetHealthDescriptions':targets}))
-elif args[0] == 'elbv2':
-    host = target_host()
-    operation = args[2] if args[1] == 'wait' else args[1]
-    action = {'deregister-targets':'deregister', 'target-deregistered':'drain',
-              'register-targets':'register', 'target-in-service':'healthy'}[operation]
-    event(action, host)
-    # 일반 ALB 실패는 첫 호출만 실패시켜 이후 자동 복구의 등록/healthy까지 검증한다.
-    failed_action = f'{action}-{host}'
-    already_failed = failed_action in state.setdefault('failed', [])
-    if failure == failed_action and not already_failed:
-        state['failed'].append(failed_action)
-        save()
-        sys.exit(1)
-    if failure == 'rollback-alb' and action == 'register':
-        sys.exit(1)
-    retrying_second = any(c['host'] == '2' and c['phase'] == 'replace' for c in state['commands'].values())
-    if host == '2' and retrying_second and failure == f'retry-{action}':
-        sys.exit(1)
-    containers = json.loads((root / f'host-{host}' / 'containers.json').read_text())
-    if action in ('register', 'healthy') and containers.get('laimory', {}).get('id') == 'new-container':
-        # 기존 컨테이너가 없는 단독 복구 외에는 ALB 복귀까지 보관 후보를 유지해야 한다.
-        if os.environ.get('DEPLOY_TARGET') != 'host-2':
-            assert containers['laimory-rollback']['id'] == 'previous-container'
-    state['health'][host] = {'deregister':'draining','drain':'unused',
-                             'register':'initial','healthy':'healthy'}[action]
-    save()
-else:
-    raise AssertionError('unexpected runner AWS command')
-PYEOF
+cat > "$RUNNER_STUB/aws" <<'STUBEOF'
+#!/usr/bin/env bash
+case "$*" in
+  *"ssm send-command"*)
+    echo send >> "$RUNNER_EVENTS"
+    [ "${FAKE_SEND_EXIT:-0}" = "0" ] || exit "$FAKE_SEND_EXIT"
+    echo fixture-command ;;
+  *"--query Status "*) echo "$FAKE_SSM_STATUS" ;;
+  *) echo "remote output" ;;
+esac
+STUBEOF
 chmod +x "$RUNNER_STUB/aws"
-
-run_rolling() {
-  # $1 failure injection, $2 optional manual target, $3=present keeps host-2's old container.
-  ROLL_DIR=$(mktemp -d "$WORK/rolling.XXXXXX")
-  : > "$ROLL_DIR/events"
-  for host in 1 2; do
-    CASE_DIR="$ROLL_DIR/host-$host"; mkdir -p "$CASE_DIR"
-    base_env_fixture
-    PATH=/usr/bin:/bin sed -i.bak -e 's/^APP_ENV=dev$/APP_ENV=prod/' \
-      -e 's/^REDIS_KEY_PREFIX=dev_$/REDIS_KEY_PREFIX=/' -e 's/^SWAGGER_ENABLED=true$/SWAGGER_ENABLED=false/' "$CASE_DIR/.env"
-    rm "$CASE_DIR/.env.bak"
-    cp "$CASE_DIR/.env" "$CASE_DIR/.env.orig"
-    python3 - "$CASE_DIR" <<'PYEOF'
-import json, sys
-from pathlib import Path
-root = Path(sys.argv[1])
-previous = dict(id='previous-container', image='sha256:'+'b'*64, running=True,
-    env=['APP_COMMIT_SHA='+'a'*40, 'JWT_SECRET=SENTINEL_SECRET_XYZZY_previous'],
-    mounts=['/fixture/previous-credential:/run/secrets/firebase-service-account.json:ro'])
-(root / 'containers.json').write_text(json.dumps({'laimory':previous}))
-(root / 'previous.json').write_text(json.dumps(previous))
-PYEOF
-    touch "$CASE_DIR/docker.log" "$CASE_DIR/chown.log"
-  done
-  if [ "${2:-all}" = "host-2" ] && [ "${3:-absent}" = "absent" ]; then
-    echo '{}' > "$ROLL_DIR/host-2/containers.json"
-    echo '{"health":{"1":"healthy","2":"unused"},"commands":{}}' > "$ROLL_DIR/state.json"
-  else
-    echo '{"health":{"1":"healthy","2":"healthy"},"commands":{}}' > "$ROLL_DIR/state.json"
-  fi
-  if [ "$1" = "stale-previous" ]; then
-    python3 - "$ROLL_DIR/host-1/containers.json" <<'PYEOF'
-import json, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-items = json.loads(p.read_text())
-items['laimory-rollback'] = dict(items['laimory'], id='stale-candidate', running=False)
-p.write_text(json.dumps(items))
-PYEOF
-  fi
-  (
-    cd "$ROLL_DIR" || exit 1
-    env "PATH=$RUNNER_STUB:$STUB:$PATH" "REMOTE_STUB=$STUB" "REMOTE_DOCKER_MODEL=$WORK/docker-model.py" "ROLL_DIR=$ROLL_DIR" "ROLL_FAIL=$1" \
-      "AWS_REGION=ap-test-1" "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" \
-      "IMAGE_TAG=$FAKE_SHA" "IMAGE_DIGEST=$FAKE_DIGEST" "GITHUB_EVENT_NAME=workflow_dispatch" \
-      "ENVIRONMENT=prod" "EXPECT_APP_ENV=prod" "EXPECT_REDIS_KEY_PREFIX=" \
-      "EXPECT_SWAGGER_ENABLED=false" "EXPECT_APP_GEO_MODE=kakao" \
-      "INSTANCE_IDS=$FAKE_PROD_IDS" "HOST_COUNT=2" "DEPLOY_TARGET=${2:-all}" \
-      "TARGET_GROUP_ARN=arn:aws:elasticloadbalancing:ap-test-1:000000000000:targetgroup/fixture/1234567890123456" \
-      /bin/bash "$WORK/ssm_run.sh"
-  ) > "$ROLL_DIR/out.log" 2>&1
-  ROLL_RC=$?
-  ! grep -qE "$SENTINEL|i-prod[0-9]+|targetgroup/fixture" "$ROLL_DIR/out.log" \
-    || fail "rolling: secret or target identifier leaked"
+run_runner() {
+  # $1 SSM status, $2 send exit
+  RUNNER_DIR=$(mktemp -d "$WORK/runner.XXXXXX"); : > "$RUNNER_DIR/events"
+  (cd "$RUNNER_DIR" && env "PATH=$RUNNER_STUB:$PATH" "RUNNER_EVENTS=$RUNNER_DIR/events" "FAKE_SSM_STATUS=$1" "FAKE_SEND_EXIT=$2" \
+    "REGISTRY=registry.test" "ECR_REPOSITORY=laimory" "IMAGE_TAG=$FAKE_SHA" "IMAGE_DIGEST=" "GITHUB_EVENT_NAME=push" "AWS_REGION=ap-test-1" \
+    "INSTANCE_IDS=$FAKE_DEV_ID" "HOST_COUNT=1" $(dev_runner_env) /bin/bash "$WORK/ssm_run.sh") > "$RUNNER_DIR/out.log" 2>&1
+  RUNNER_RC=$?
+  [ "$(grep -c send "$RUNNER_DIR/events")" = "1" ] || fail "T12($1/$2): exactly one command per host expected"
+  ! grep -q "$FAKE_DEV_ID" "$RUNNER_DIR/out.log" || fail "T12($1/$2): instance id must not reach the public log"
 }
-
-run_rolling ''
-[ "$ROLL_RC" = "0" ] || fail "rolling success: $(cat "$ROLL_DIR/out.log")"
-cat > "$ROLL_DIR/expected" <<'EXPECTED'
-prepare 1
-peer 2
-deregister 1
-drain 1
-replace 1
-register 1
-healthy 1
-cleanup 1
-prepare 2
-peer 1
-deregister 2
-drain 2
-replace 2
-register 2
-healthy 2
-cleanup 2
-EXPECTED
-cmp -s "$ROLL_DIR/expected" "$ROLL_DIR/events" || fail "rolling success: wrong order"
-for host in 1 2; do
-  CASE_DIR="$ROLL_DIR/host-$host"; CHOWN_LOG="$CASE_DIR/chown.log"
-  assert_prune_once "rolling success host $host"; assert_sha_line "rolling success host $host"
-  [ -f "$CASE_DIR/image" ] || fail "running image must survive final cleanup"
-  python3 - "$CASE_DIR/containers.json" <<'PYEOF' || fail "success must remove only the previous container"
-import json, sys
-items = json.load(open(sys.argv[1]))
-assert list(items) == ['laimory']
-assert items['laimory']['id'] == 'new-container' and items['laimory']['running']
-PYEOF
-  [ "$(grep -c '^docker pull' "$CASE_DIR/docker.log")" = "1" ] || fail "image must be pulled only during preparation"
+run_runner Success 0
+[ "$RUNNER_RC" = "0" ] || fail "T12(success): rc=$RUNNER_RC ($(cat "$RUNNER_DIR/out.log"))"
+for status in Failed Cancelled TimedOut; do
+  run_runner "$status" 0
+  [ "$RUNNER_RC" != "0" ] || fail "T12($status): workflow must fail"
 done
-ok "T11: production ALB/SSM flow orders two hosts and preserves prepared/running images"
-
-run_rolling '' host-2
-[ "$ROLL_RC" = "0" ] || fail "single-host recovery: $(cat "$ROLL_DIR/out.log")"
-[ ! -s "$ROLL_DIR/host-1/docker.log" ] || fail "single-host recovery must leave host 1 untouched"
-grep -qx 'peer 1' "$ROLL_DIR/events" || fail "single-host recovery must check host 1"
-grep -qx 'healthy 2' "$ROLL_DIR/events" || fail "single-host recovery must return host 2 healthy"
-CASE_DIR="$ROLL_DIR/host-2"; CHOWN_LOG="$CASE_DIR/chown.log"
-assert_prune_once "single-host recovery"; assert_sha_line "single-host recovery"
-! grep -q '^docker stop' "$CASE_DIR/docker.log" || fail "missing container must not require stop"
-ok "T12: missing host 2 is recovered to the exact new image while host 1 keeps serving"
-
-assert_previous_restored() {
-  python3 - "$ROLL_DIR/host-$1" <<'PYEOF' || fail "previous container/runtime must be restored exactly"
-import json, sys
-from pathlib import Path
-root = Path(sys.argv[1])
-items = json.loads((root / 'containers.json').read_text())
-previous = json.loads((root / 'previous.json').read_text())
-assert list(items) == ['laimory']
-actual = items['laimory']
-assert actual['running']
-for key in ('id', 'image', 'env', 'mounts'):
-    assert actual[key] == previous[key], key
-lines = (root / '.env').read_text().splitlines()
-assert [line for line in lines if line.startswith('APP_COMMIT_SHA=')] == ['APP_COMMIT_SHA='+'a'*40]
-assert [line for line in lines if not line.startswith('APP_COMMIT_SHA=')] == (root / '.env.orig').read_text().splitlines()
-PYEOF
-  grep -q 'ROLLBACK SUCCEEDED:.*deployment remains failed' "$ROLL_DIR/out.log" || fail "rollback result must be explicit"
-  [ "$(grep -c "^rollback $1$" "$ROLL_DIR/events")" = "1" ] || fail "rollback must run exactly once"
-}
-
-for failure in prepare-1 peer-2 deregister-1 drain-1 replace-1 readiness-1 stop-1 killed-1 upsert-1 register-1 healthy-1; do
-  run_rolling "$failure"
-  [ "$ROLL_RC" != "0" ] || fail "$failure must fail workflow"
-  [ ! -s "$ROLL_DIR/host-2/docker.log" ] || fail "$failure must preserve the next host"
-  CASE_DIR="$ROLL_DIR/host-1"; assert_prune_once "$failure"
-  case "$failure" in
-    prepare-*|peer-*|deregister-*|drain-*) assert_env_untouched "$failure"; assert_no_stop_no_run "$failure" ;;
-    stop-*|killed-*) ! grep -q '^docker run -d' "$CASE_DIR/docker.log" || fail "$failure must stop replacement" ;;
-  esac
-  case "$failure" in
-    prepare-*|peer-*|deregister-*|drain-*)
-      ! grep -q '^register ' "$ROLL_DIR/events" || fail "$failure must not blindly register the target" ;;
-    *) assert_previous_restored 1 ;;
-  esac
-done
-ok "T13: pre-stop failures preserve the app; replace/readiness/ALB failures restore the previous runtime once"
-
-assert_first_host_kept() {
-  [ "$(grep -c '^docker stop' "$ROLL_DIR/host-1/docker.log")" = "1" ] || fail "host 1 must not be redeployed after host 2 failure"
-  [ "$(grep -c '^replace 1$' "$ROLL_DIR/events")" = "1" ] || fail "host 1 must be replaced only once"
-  python3 - "$ROLL_DIR/host-1/containers.json" <<'PYEOF' || fail "successful host 1 must keep the new container"
-import json, sys
-items = json.load(open(sys.argv[1]))
-assert list(items) == ['laimory']
-assert items['laimory']['id'] == 'new-container' and items['laimory']['running']
-PYEOF
-}
-
-for failure in prepare-2 deregister-2 drain-2 replace-2 readiness-2 stop-2 killed-2 upsert-2 register-2 healthy-2; do
-  run_rolling "$failure"
-  [ "$ROLL_RC" = "0" ] || fail "$failure retry should complete the rollout: $(cat "$ROLL_DIR/out.log")"
-  assert_first_host_kept
-  ! grep -q '^rollback ' "$ROLL_DIR/events" || fail "$failure must retry the new image without rollback"
-  grep -q 'RETRY SUCCEEDED' "$ROLL_DIR/out.log" || fail "$failure must report successful retry"
-  CASE_DIR="$ROLL_DIR/host-2"; CHOWN_LOG="$CASE_DIR/chown.log"
-  assert_sha_line "$failure retry"
-  case "$failure" in
-    prepare-*) [ "$(grep -c '^prepare 2$' "$ROLL_DIR/events")" = "2" ] || fail "failed preparation must be retried once" ;;
-    *) assert_prune_once "$failure retry" ;;
-  esac
-  case "$failure" in
-    prepare-*|deregister-*|drain-*) ! grep -q '^retry 2$' "$ROLL_DIR/events" || fail "first replacement must still preserve the old container" ;;
-    *) [ "$(grep -c '^retry 2$' "$ROLL_DIR/events")" = "1" ] || fail "replacement must retry exactly once" ;;
-  esac
-  [ "$(grep -c '^docker pull' "$CASE_DIR/docker.log")" = "$([ "$failure" = prepare-2 ] && echo 2 || echo 1)" ] \
-    || fail "$failure must reuse the prepared image unless preparation failed"
-  python3 - "$ROLL_DIR" <<'PYEOF' || fail "retry must restore both hosts to the same new image and healthy state"
-import json, sys
-from pathlib import Path
-root = Path(sys.argv[1])
-first = json.loads((root/'host-1/containers.json').read_text())
-second = json.loads((root/'host-2/containers.json').read_text())
-assert list(second) == ['laimory']
-assert second['laimory']['id'] == 'new-container' and second['laimory']['running']
-assert second['laimory']['image'] == first['laimory']['image']
-assert json.loads((root/'state.json').read_text())['health'] == {'1':'healthy', '2':'healthy'}
-events = (root/'events').read_text().splitlines()
-assert events.index('healthy 1') < events.index('prepare 2')
-if 'retry 2' in events:
-    n = events.index('retry 2')
-    assert events[n-3:n] == ['peer 1', 'deregister 2', 'drain 2']
-    assert events[n+1:] == ['register 2', 'healthy 2', 'cleanup 2']
-PYEOF
-done
-ok "T14: after host 1 succeeds, host 2 retries the same new image once and can complete the rollout"
-
-for failure in send-replace-1 uncertain-replace-1; do
-  run_rolling "$failure"
-  [ "$ROLL_RC" != "0" ] || fail "$failure must fail workflow"
-  ! grep -q '^cleanup ' "$ROLL_DIR/events" || fail "$failure must not send cleanup while remote state is uncertain"
-  ! grep -q '^rollback ' "$ROLL_DIR/events" || fail "$failure must not send rollback while remote state is uncertain"
-  [ ! -s "$ROLL_DIR/host-2/docker.log" ] || fail "$failure must not advance"
-done
-run_rolling cleanup-1
-[ "$ROLL_RC" = "0" ] || fail "prune failure must not change successful rollout status"
-ok "T15: uncertain remote state does not launch more work; cleanup failure preserves rollout status"
-
-for failure in wrong-group foreign-target; do
-  run_rolling "$failure"
-  [ "$ROLL_RC" != "0" ] || fail "$failure must fail before touching hosts"
-  [ ! -s "$ROLL_DIR/events" ] || fail "$failure must not begin SSM/ALB mutations"
-done
-for selection in host-1 host-2; do
-  run_resolve workflow_dispatch main prod "$FAKE_PROD_IDS" "$FAKE_TEST_ID" "$selection"
-  [ "$RESOLVE_RC" = "0" ] || fail "prod $selection selection must succeed"
-  assert_resolved "$selection" "deploy_target=$selection"
-  assert_resolved "$selection" "host_count=2"
-  assert_resolved "$selection" "instance_ids=$FAKE_PROD_IDS"
-done
-run_resolve push main '' "$FAKE_PROD_IDS" "$FAKE_TEST_ID" host-2
-assert_resolved 'push target' 'deploy_target=all'
-run_resolve workflow_dispatch main dev "$FAKE_PROD_IDS" "$FAKE_TEST_ID" host-1
-[ "$RESOLVE_RC" != "0" ] || fail "dev single-host selection must fail"
-run_resolve workflow_dispatch main prod "$FAKE_PROD_IDS" "$FAKE_TEST_ID" arbitrary
-[ "$RESOLVE_RC" != "0" ] || fail "unknown selection must fail"
-run_resolve workflow_dispatch main prod 'i-prod0000000000001 i-prod0000000000001'
-[ "$RESOLVE_RC" != "0" ] || fail "duplicate prod hosts must fail"
-ok "T16: topology and manual selection fail closed; push and peer checks keep the full prod host list"
-
-# #489: 복구 자체 실패/연결 유실은 두 번째 복구나 다음 host로 진행하지 않는다.
-for failure in rollback-start rollback-readiness rollback-stop rollback-send rollback-uncertain rollback-peer rollback-alb; do
-  run_rolling "$failure"
-  [ "$ROLL_RC" != "0" ] || fail "$failure must retain failed workflow status"
-  [ ! -s "$ROLL_DIR/host-2/docker.log" ] || fail "$failure must leave host 2 untouched"
-  [ "$(grep -c '^rollback ' "$ROLL_DIR/events" || true)" -le 1 ] || fail "$failure must not retry rollback"
-  grep -q 'ROLLBACK FAILED' "$ROLL_DIR/out.log" || fail "$failure must report rollback failure"
-  case "$failure" in
-    rollback-start|rollback-readiness|rollback-stop|rollback-send|rollback-uncertain|rollback-peer)
-      ! grep -q '^register ' "$ROLL_DIR/events" || fail "$failure must not register an unverified app" ;;
-  esac
-  case "$failure" in
-    rollback-send|rollback-uncertain)
-      ! grep -q '^cleanup ' "$ROLL_DIR/events" || fail "$failure must not clean up uncertain remote work" ;;
-  esac
-  python3 - "$ROLL_DIR/host-1/containers.json" <<'PYEOF' || fail "$failure must retain the previous container/image"
-import json, sys
-items = json.load(open(sys.argv[1]))
-assert any(item['id'] == 'previous-container' for item in items.values())
-PYEOF
-done
-ok "T17: failed or uncertain rollback preserves its candidate and never advances or retries"
-
-run_rolling replace-2 host-2
-[ "$ROLL_RC" != "0" ] || fail "missing previous container must fail after new app failure"
-grep -q 'no previous container is available' "$ROLL_DIR/out.log" || fail "missing rollback candidate must be explained"
-[ ! -s "$ROLL_DIR/host-1/docker.log" ] || fail "missing candidate must not touch the serving host"
-! grep -q '^register ' "$ROLL_DIR/events" || fail "missing candidate must not be registered"
-ok "T18: initial/single-host recovery reports a missing rollback candidate without inventing an image"
-
-run_rolling stale-previous
-[ "$ROLL_RC" != "0" ] || fail "stale rollback candidate must block a new deployment"
-CASE_DIR="$ROLL_DIR/host-1"
-assert_env_untouched 'stale previous'; assert_no_stop_no_run 'stale previous'
-! grep -q '^deregister ' "$ROLL_DIR/events" || fail "stale candidate must fail before changing traffic"
-python3 - "$CASE_DIR/containers.json" <<'PYEOF' || fail "stale candidate must not be deleted"
-import json, sys
-items = json.load(open(sys.argv[1]))
-assert items['laimory']['running']
-assert items['laimory-rollback']['id'] == 'stale-candidate'
-PYEOF
-ok "T19: a retained rollback candidate blocks replacement without losing the running app or candidate"
-
-for failure in retry-prepare retry-run retry-readiness retry-stop retry-killed retry-upsert retry-send retry-uncertain retry-peer retry-deregister retry-drain retry-register retry-healthy; do
-  run_rolling "$failure"
-  [ "$ROLL_RC" != "0" ] || fail "$failure must fail the rollout after one retry"
-  assert_first_host_kept
-  grep -q 'RETRY FAILED:.*no rollback' "$ROLL_DIR/out.log" || fail "$failure must report retry failure without rollback"
-  ! grep -q '^rollback ' "$ROLL_DIR/events" || fail "$failure must never roll back after host 1 succeeds"
-  [ "$(grep -c '^retry 2$' "$ROLL_DIR/events" || true)" -le 1 ] || fail "$failure must not loop retries"
-  case "$failure" in
-    retry-send|retry-uncertain)
-      ! grep -q '^cleanup 2$' "$ROLL_DIR/events" || fail "$failure must not clean up uncertain retry work" ;;
-    retry-prepare)
-      [ "$(grep -c '^prepare 2$' "$ROLL_DIR/events")" = "2" ] || fail "preparation must stop after one retry"
-      CASE_DIR="$ROLL_DIR/host-2"; assert_env_untouched "$failure"; assert_no_stop_no_run "$failure" ;;
-  esac
-  python3 - "$ROLL_DIR/host-2/containers.json" <<'PYEOF' || fail "$failure must retain the previous container without restarting it"
-import json, sys
-items = json.load(open(sys.argv[1]))
-assert any(item['id'] == 'previous-container' for item in items.values())
-PYEOF
-  ! grep -q '^docker start ' "$ROLL_DIR/host-2/docker.log" || fail "$failure must not restart the previous version"
-done
-ok "T20: a failed second-host retry stops once, keeps host 1 and the backup, and never rolls back"
-
-for failure in send-prepare-2 uncertain-prepare-2 send-replace-2 uncertain-replace-2; do
-  run_rolling "$failure"
-  [ "$ROLL_RC" != "0" ] || fail "$failure must fail without retrying uncertain work"
-  assert_first_host_kept
-  ! grep -qE '^(retry|rollback|cleanup) 2$' "$ROLL_DIR/events" || fail "$failure must not send more remote work"
-  ! grep -q '^RETRY:' "$ROLL_DIR/out.log" || fail "$failure must not start a retry"
-  grep -q 'RECOVERY SKIPPED: remote state is uncertain' "$ROLL_DIR/out.log" || fail "$failure must explain skipped recovery"
-done
-ok "T21: uncertain preparation/replacement on host 2 does not trigger retry or rollback"
-
-run_rolling replace-2 host-2 present
-[ "$ROLL_RC" != "0" ] || fail "manual single-host rollback must retain failure status"
-[ ! -s "$ROLL_DIR/host-1/docker.log" ] || fail "manual host-2 must leave host 1 untouched"
-! grep -q '^retry ' "$ROLL_DIR/events" || fail "manual host-2 must not assume a new image succeeded earlier in this run"
-assert_previous_restored 2
-ok "T22: manual host-2 keeps rollback policy without a successful first host in the same rollout"
+run_runner Success 9
+[ "$RUNNER_RC" != "0" ] || fail "T12(send failure): workflow must fail"
+ok "T12: the runner reports the SSM result and never retries or prints instance ids"
 
 echo "PASS: deploy contract harness ($PASS groups)"
