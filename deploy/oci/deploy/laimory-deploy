@@ -154,6 +154,10 @@ if [ "$ACTION" = "deploy" ]; then
   PHASE=started
   (cd "$ROOT" && docker compose up -d --no-deps --pull never --force-recreate "$SERVICE-$CANDIDATE" >/dev/null 2>&1) \
     || die "candidate container did not start"
+  # label을 확인한 이미지로 떴는지 본다. compose 변수 이름이 틀리거나 .env가 그새 바뀌면 다른 이미지가 뜬다.
+  RUNNING_IMAGE=$(docker inspect --format '{{.Image}}' "$(container_id "$CANDIDATE")" 2>/dev/null)
+  [ -n "$RUNNING_IMAGE" ] && [ "$RUNNING_IMAGE" = "$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null)" ] \
+    || die "candidate is not running the verified image"
 else
   [ "$(cat "$STANDBY" 2>/dev/null)" = "$CANDIDATE" ] || die "no known-good standby; redeploy the previous commit instead"
   say "start: $SERVICE rollback (active $ACTIVE, candidate $CANDIDATE)"

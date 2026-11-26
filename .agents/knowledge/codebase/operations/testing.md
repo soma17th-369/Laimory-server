@@ -68,8 +68,9 @@ Gradle test task, local infrastructure, CI와 image build가 실제로 검증하
   전달을 검사하고, prod(`main` trigger·prod 선택지·`PROD_*` secret)가 AWS 배포로 되돌아오면 실패한다.
   실제 AWS 권한은 이 fixture로 검증되지 않는다.
 - OCI prod 배포 계약은 `.github/scripts/test-oci-deploy-contract.sh`가 검증한다. `deploy-oci.yml`의 trigger·권한·Environment·
-  고정 action과, host 배포 스크립트 원본을 상태를 기억하는 fake docker로 실행한 전환·복귀·시간 차단·실패 시 옛 색 유지·
-  공개 출력에 명령 출력이 섞이지 않음을 본다. 실제 nginx 전환의 무중단은 로컬 부하 시험으로만 확인한다.
+  고정 action·수동 deploy의 `main` 이력 확인과, host 배포 스크립트 원본을 상태를 기억하는 fake docker로 실행한 전환·복귀·
+  시간 차단·실패 시 옛 색 유지(전환 확인 실패 때 nginx 재반영 포함)·systemd 분리 실행의 동시 배포 거절과 결과 전달·
+  공개 출력에 명령 출력이 섞이지 않음을 본다. 실제 `TZ=Asia/Seoul` 시각 계산은 경계값 주입으로만 본다. 실제 nginx 전환의 무중단은 로컬 부하 시험으로만 확인한다.
 - 관리자 SSM target 선택은
   `bash .github/scripts/test-admin-tunnel.sh`가 검증하며, 이 검사와 앱·OCI 배포 harness는 PR CI에서 실행한다.
 - 관리자 connector/Host/Origin/CSRF/OpenAPI는 `AdminHttpTest`·`AdminDisabledHttpTest`의 실 Tomcat
