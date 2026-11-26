@@ -13,7 +13,7 @@ automation을 바꿀 때 읽는다.
 
 - `application.properties`, `application-docker.properties`
 - `logback-spring.xml`, `docker-compose.yml`
-- `.github/workflows/deploy.yml`
+- `.github/workflows/deploy.yml`, `.github/workflows/deploy-oci.yml`
 - `deploy/monitoring/*`, `deploy/oci/mysql/*`
 - live AWS, GitHub repository Variables/Secrets(instance 목록은 Secrets)와 host `.env`
 
@@ -24,7 +24,7 @@ automation을 바꿀 때 읽는다.
 | local | `docker` | Compose | default noop | default noop | default noop | default `fixture` | on | text | empty | none |
 | integration | `docker` | Compose | default noop; test spy/simulation | default noop | default noop | default `fixture` | on | text | empty | local task |
 | dev | default | dev MySQL + shared Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | on | JSON, dev environment | `dev_` | `dev` push |
-| prod | default | **OCI host** MySQL 컨테이너 + Upstash Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | 없음(OCI 수동, #669) |
+| prod | default | **OCI host** MySQL 컨테이너 + Upstash Redis | `.env` 전환(기본 noop) | `.env` Kakao | `.env` 전환(기본 noop) | `.env` `secretsmanager`(preflight 값 고정) | off | JSON, prod environment | empty | `main` push(OCI) |
 | test | default | **dev MySQL 공유** + shared Redis | `.env` `http`(kakao-simulator) | `.env` Kakao(**simulator base URL + dummy key**) | `.env` noop | `.env` `secretsmanager`(dev와 같은 secret — DB 공유라 같은 HMAC key 필수) | on | **수집 없음**(Filebeat 미설치, host `docker logs`만) | `test_` | `test` push |
 
 Flyway는 공통 설정에서 켜져 모든 환경의 앱 시작 시 실행한다. 앱 DataSource 계정(`DB_USERNAME`)은 DML만
@@ -82,8 +82,8 @@ forwarded header로 대체하지 않는다. `.env` 반영은 별도 승인된 ho
 DB는 같은 host의 MySQL 컨테이너(AWS MySQL replica에서 승격), 스케줄러 6종도 OCI api에서(`SERVER_COUNT=1`) 돈다. AI는
 같은 host의 ai 컨테이너(http 모드)다. OCI의 compose·`.env`는 저장소에 없고 host가 소유한다(`deploy/oci/*` README가 절차 원본).
 AWS prod WAS 2대·mysql-01·관측 host는 중지(stop) 상태로 보관 중이고(폐기 예정), 아래 AWS prod 서술은 그 보관본 기준이다.
-OCI 자동 배포 경로는 아직 없다(미구현, #669). `.github/workflows/deploy.yml`은 dev·test만 배포하고 `main` push는 어디에도
-배포하지 않으므로 OCI api 갱신은 수동 이미지 빌드·교체다. migration도 그동안 WAS 기동 Flyway가 적용했으므로 OCI 쪽 경로가 생기기 전까지 없다.
+prod 배포는 `deploy-oci.yml`이 OCI host에 blue/green으로 한다([deployment](deployment.md)의 Prod Deployment). `.github/workflows/deploy.yml`은
+dev·test만 배포한다. OCI api의 commit·JVM 설정은 compose의 색별 `environment`가 `api.env`보다 우선한다.
 
 prod host 3대(mysql-01, was-01, was-02)는 OS 보안 패치를 unattended-upgrades로 자동 설치하지만,
 서비스를 자동으로 재시작하지 않는다. needrestart는 목록만 표시하도록(`'l'`) 설정했고, mysql-01은 `mysql-`

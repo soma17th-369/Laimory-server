@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# OCI prod의 api·ai를 새 이미지로 무중단 교체한다(blue/green). 절차·설치는 같은 디렉터리 README.
+#
+#   laimory-deploy <api|ai> <40자 commit SHA> <sha256:...>   새 이미지 배포(CI·사람)
+#   laimory-deploy rollback <api|ai>                         정지 보관한 직전 색으로 복귀(사람 전용)
+#
+# 출력은 고정 문구·색·SHA·digest뿐이다. 호출자의 출력이 공개 Actions 로그로 가므로 컨테이너 로그, 환경변수,
+# compose 설정 원문을 출력하지 않는다(.github/scripts/test-oci-deploy-contract.sh가 검사한다). LAIMORY_* 변수는
+# 그 harness용 seam이다 — 운영 호출은 sudo·systemd가 환경을 비워 설정되지 않는다.
+set -uo pipefail
+
+ROOT="${LAIMORY_ROOT:-/opt/laimory}"
+RUN_DIR="${LAIMORY_RUN_DIR:-/run/laimory-deploy}"
+STATE_DIR="${LAIMORY_STATE_DIR:-/var/lib/laimory/deploy}"
+PROJECT=laimory
+NETWORK=laimory
+
+say() { printf '%s\n' "$*"; }
+usage() { say "usage: laimory-deploy <api|ai> <sha> <digest> | rollback <api|ai>" >&2; exit 2; }
+
+ACTION=deploy
+if [ "${1:-}" = "rollback" ]; then
+  [ "$#" = "2" ] || usage
+  ACTION=rollback; SERVICE=$2; SHA=""; DIGEST=""
+else
+  [ "$#" = "3" ] || usage
+  SERVICE=$1; SHA=$2; DIGEST=$3
+  [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || usage
+  [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || usage
+fi
+
+case "$SERVICE" in
+  api)
+    REPOSITORY=ghcr.io/soma17th-369/laimory-server
+    PROBE_PORT=8088            # nginx 내부 listener(ai → api). 외부 8443과 같은 upstream을 쓴다
+    HEALTH_PATHS="/readyz /api/v1/intro"
+    HEALTH_TIMEOUT=90
+    STOP_TIMEOUT=120
+    ;;
+  ai)
+    REPOSITORY=ghcr.io/soma17th-369/laimory-ai
+    PROBE_PORT=8089            # nginx 내부 listener(api → ai)
+    HEALTH_PATHS="/ping"
+    HEALTH_TIMEOUT=90
+    STOP_TIMEOUT=300           # uvicorn이 진행 중인 생성 작업을 마칠 때까지 기다린다
+    ;;
+  *) usage ;;
+esac
+
+# ── 바깥 실행: SSH 세션이 끊겨도 배포가 끝까지 가도록 systemd unit으로 분리한다. unit 이름이 동시 배포도 막는다 ──
+if [ "${LAIMORY_DEPLOY_INNER:-}" != "1" ]; then
+  UNIT="laimory-deploy-$SERVICE"
+  if systemctl is-active --quiet "$UNIT.service"; then
+    say "FAIL: another $SERVICE deployment is running"; exit 1
+  fi
+  mkdir -p "$RUN_DIR" "$STATE_DIR" && chmod 0755 "$RUN_DIR" "$STATE_DIR" || exit 1
+  LOG="$RUN_DIR/$SERVICE.log"
+  : > "$LOG" || exit 1
+  systemd-run --quiet --collect --wait --unit="$UNIT" --setenv=LAIMORY_DEPLOY_INNER=1 \
+    --property=StandardOutput="append:$LOG" --property=StandardError=journal "$0" "$@"
+  RESULT=$?
+  cat "$LOG"
+  exit "$RESULT"
+fi
+
+# ── 안쪽 실행 ──────────────────────────────────────────────────────────────────────
+UPSTREAM="$ROOT/nginx/upstream/$SERVICE.conf"
+STANDBY="$STATE_DIR/$SERVICE.standby"   # 이 파일의 색은 직전에 정상 서빙한 컨테이너다(rollback 대상)
+CANDIDATE=""; ACTIVE=""
+PHASE=none                              # none → started → switched → complete
+TMP=""
+
+container_id() {  # $1 색. 정지 컨테이너 포함
+  docker ps -aq --no-trunc --filter "label=com.docker.compose.project=$PROJECT" \
+    --filter "label=com.docker.compose.service=$SERVICE-$1" 2>/dev/null | head -1
+}
+is_running() { local id; id=$(container_id "$1"); [ -n "$id" ] && [ "$(docker inspect --format '{{.State.Running}}' "$id" 2>/dev/null)" = "true" ]; }
+in_nginx() { (cd "$ROOT" && docker compose exec -T nginx "$@" 2>/dev/null </dev/null); }
+stop_color() {  # SIGTERM 뒤 상한까지 기다린다. ai는 작업을 마치다 상한에 닿아 137이 될 수 있어 종료 코드는 보지 않는다
+  local id; id=$(container_id "$1"); [ -z "$id" ] || docker stop -t "$STOP_TIMEOUT" "$id" >/dev/null 2>&1
+}
+
+render_upstream() {  # $1 활성 색. 두 색을 늘 함께 적고 down 표시만 옮긴다 — reload 때 새 색 주소를 이미 알고 있게
+  local color mark
+  printf 'upstream laimory_%s {\n    zone laimory_%s 64k;\n    resolver_timeout 2s;\n' "$SERVICE" "$SERVICE"
+  for color in blue green; do
+    mark=" down"; [ "$color" = "$1" ] && mark=""
+    printf '    server %s-%s:8080 resolve max_fails=0%s;\n' "$SERVICE" "$color" "$mark"
+  done
+  printf '}\n'
+}
+write_upstream() {  # $1 활성 색. 같은 디렉터리 임시 파일 + rename, nginx 사용자가 읽게 0644
+  TMP=$(mktemp "$ROOT/nginx/upstream/.$SERVICE.XXXXXX") || return 1
+  render_upstream "$1" > "$TMP" && chmod 0644 "$TMP" && mv -f "$TMP" "$UPSTREAM" || return 1
+  TMP=""
+}
+apply_upstream() { write_upstream "$1" && in_nginx nginx -t >/dev/null && in_nginx nginx -s reload >/dev/null; }
+
+finish() {
+  local status=$?
+  trap - EXIT
+  { [ -n "$TMP" ] && rm -f "$TMP"; } 2>/dev/null
+  case "$PHASE" in
+    started)
+      stop_color "$CANDIDATE"
+      say "FAIL: traffic stays on $SERVICE-$ACTIVE; $SERVICE-$CANDIDATE stopped" ;;
+    switched)
+      if apply_upstream "$ACTIVE"; then
+        sleep 5
+        stop_color "$CANDIDATE"
+        say "FAIL: traffic returned to $SERVICE-$ACTIVE; $SERVICE-$CANDIDATE stopped"
+      else
+        say "CRITICAL: could not restore nginx upstream; both colors left running, inspect the host"
+      fi ;;
+  esac
+  [ "$PHASE" = "complete" ] || [ "$status" != "0" ] || status=1
+  exit "$status"
+}
+trap finish EXIT
+die() { say "FAIL: $*"; exit 1; }
+
+[ -f "$UPSTREAM" ] || die "upstream file is missing"
+ACTIVE_LINES=$(grep -E "^    server $SERVICE-(blue|green):8080 " "$UPSTREAM" | grep -vc ' down;')
+[ "$ACTIVE_LINES" = "1" ] && [ "$(grep -c '^    server ' "$UPSTREAM")" = "2" ] || die "upstream file does not name exactly one active color"
+ACTIVE=$(grep -E '^    server ' "$UPSTREAM" | grep -v ' down;' | sed -E "s/^    server $SERVICE-(blue|green):8080 .*/\1/")
+case "$ACTIVE" in blue) CANDIDATE=green ;; green) CANDIDATE=blue ;; *) die "active color is unknown" ;; esac
+is_running "$ACTIVE" || die "active container $SERVICE-$ACTIVE is not running"
+! is_running "$CANDIDATE" || die "$SERVICE-$CANDIDATE is already running; only one color may run before a deployment"
+(cd "$ROOT" && docker compose config -q >/dev/null 2>&1) || die "compose file is invalid"
+
+if [ "$ACTION" = "deploy" ]; then
+  say "start: $SERVICE $SHA $DIGEST (active $ACTIVE, candidate $CANDIDATE)"
+  IMAGE="$REPOSITORY@$DIGEST"
+  docker pull -q "$IMAGE" >/dev/null || die "image pull failed; nothing changed"
+  [ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE" 2>/dev/null)" = "$SHA" ] \
+    || die "image revision label does not match the requested commit; nothing changed"
+
+  # 02:30~04:30·21:00 스케줄 job은 두 api가 함께 돌면 안 된다(같은 행 동시 삭제, 정지 중 발송 유실).
+  # pull이 오래 걸려도 창을 넘지 않게 대기 색을 띄우기 직전에 본다.
+  if [ "$SERVICE" = "api" ]; then
+    NOW=$((10#${LAIMORY_NOW:-$(TZ=Asia/Seoul date +%H%M)}))
+    if { [ "$NOW" -ge 225 ] && [ "$NOW" -lt 450 ]; } || { [ "$NOW" -ge 2055 ] && [ "$NOW" -lt 2110 ]; }; then
+      die "scheduled jobs window (KST 02:25-04:50, 20:55-21:10); nothing changed, rerun later"
+    fi
+  fi
+
+  # 색별 image·commit은 compose가 읽는 .env에 둔다(비밀 아님). 다른 줄은 보존한다.
+  UPPER=$(printf '%s_%s' "$SERVICE" "$CANDIDATE" | tr '[:lower:]' '[:upper:]')
+  TMP=$(mktemp "$ROOT/.env.XXXXXX") || die "cannot write compose env"
+  { grep -vE "^${UPPER}_(IMAGE|SHA)=" "$ROOT/.env"; printf '%s_IMAGE=%s\n%s_SHA=%s\n' "$UPPER" "$IMAGE" "$UPPER" "$SHA"; } > "$TMP" \
+    && chmod 0644 "$TMP" && mv -f "$TMP" "$ROOT/.env" || die "cannot write compose env"
+  TMP=""
+  rm -f "$STANDBY"
+  PHASE=started
+  (cd "$ROOT" && docker compose up -d --no-deps --pull never --force-recreate "$SERVICE-$CANDIDATE" >/dev/null 2>&1) \
+    || die "candidate container did not start"
+else
+  [ "$(cat "$STANDBY" 2>/dev/null)" = "$CANDIDATE" ] || die "no known-good standby; redeploy the previous commit instead"
+  say "start: $SERVICE rollback (active $ACTIVE, candidate $CANDIDATE)"
+  rm -f "$STANDBY"
+  PHASE=started
+  docker start "$(container_id "$CANDIDATE")" >/dev/null 2>&1 || die "standby container did not start"
+fi
+
+# ── 대기 색 확인: nginx와 같은 네트워크에서 직접 부른다 ──
+DEADLINE=$((SECONDS + ${LAIMORY_HEALTH_TIMEOUT:-$HEALTH_TIMEOUT}))
+HEALTHY=""
+while [ "$SECONDS" -lt "$DEADLINE" ]; do
+  HEALTHY=yes
+  for path in $HEALTH_PATHS; do
+    in_nginx curl -fsS -o /dev/null --connect-timeout 1 --max-time 3 "http://$SERVICE-$CANDIDATE:8080$path" >/dev/null || { HEALTHY=""; break; }
+  done
+  [ -z "$HEALTHY" ] || break
+  sleep 2
+done
+[ -n "$HEALTHY" ] || die "candidate did not become healthy"
+is_running "$CANDIDATE" || die "candidate container is not running"
+say "healthy: $SERVICE-$CANDIDATE"
+
+# nginx resolver 유효 시간(5초) 안에 새 주소가 upstream에 반영된 뒤 전환한다.
+sleep 8
+CANDIDATE_IP=$(docker inspect --format "{{(index .NetworkSettings.Networks \"$NETWORK\").IPAddress}}" "$(container_id "$CANDIDATE")" 2>/dev/null)
+[ -n "$CANDIDATE_IP" ] || die "candidate address is unknown"
+PHASE=switched
+apply_upstream "$CANDIDATE" || die "nginx rejected the new upstream"
+
+# reload는 비동기라 잠시 옛 색이 응답할 수 있다. 대기 색이 연속으로 응답해야 전환으로 본다.
+PROBE_PATH=${HEALTH_PATHS%% *}
+CONFIRMED=0
+DEADLINE=$((SECONDS + ${LAIMORY_CONFIRM_TIMEOUT:-30}))
+while [ "$CONFIRMED" -lt 10 ] && [ "$SECONDS" -lt "$DEADLINE" ]; do
+  if [ "$(in_nginx curl -sS -o /dev/null --max-time 3 -w '%{http_code} %header{x-laimory-upstream}' "http://127.0.0.1:$PROBE_PORT$PROBE_PATH")" = "200 $CANDIDATE_IP:8080" ]; then
+    CONFIRMED=$((CONFIRMED + 1))
+  else
+    CONFIRMED=0
+  fi
+  sleep 0.3
+done
+[ "$CONFIRMED" -ge 10 ] || die "nginx did not serve the candidate"
+say "switched: $SERVICE-$CANDIDATE"
+
+# 옛 nginx worker의 진행 중 요청이 끝날 시간을 준 뒤 옛 색을 정상 종료한다. 컨테이너는 rollback용으로 남긴다.
+PHASE=complete
+sleep 30
+stop_color "$ACTIVE"
+if is_running "$ACTIVE"; then
+  say "FAIL: traffic is on $SERVICE-$CANDIDATE but $SERVICE-$ACTIVE is still running; stop it before the next deployment"
+  exit 1
+fi
+printf '%s\n' "$ACTIVE" > "$STANDBY" || say "WARN: standby marker was not written"
+# 컨테이너(정지 포함)가 쓰는 이미지는 Docker가 지우지 않는다. 이 서비스의 저장소 이미지만 대상으로 한다.
+docker image ls -q --no-trunc "$REPOSITORY" 2>/dev/null | sort -u | while read -r id; do docker image rm "$id" >/dev/null 2>&1; done
+say "done: $SERVICE-$CANDIDATE serving, $SERVICE-$ACTIVE kept stopped"
+exit 0

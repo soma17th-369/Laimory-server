@@ -94,7 +94,7 @@ no_check_bucket = true        # 버킷 한정 토큰은 버킷 생성 확인 권
 | 계정 | host | 권한 | TLS |
 |---|---|---|---|
 | `laimory`(앱 DataSource) | WAS별 Tailscale IP, compose 대역(OCI api) | `laimory.*` DML | WAS는 `REQUIRE SSL` |
-| `laimory_flyway`(migration) | WAS별 Tailscale IP | `laimory.*` DML + `CREATE, DROP, REFERENCES, INDEX, ALTER` | `REQUIRE SSL` |
+| `laimory_flyway`(migration) | WAS별 Tailscale IP, compose 대역(OCI api — 구조 전환 #669 때 생성) | `laimory.*` DML + `CREATE, DROP, REFERENCES, INDEX, ALTER` | `REQUIRE SSL` |
 
 - 권한은 AWS MySQL 시절과 같다. 비밀번호도 같아서 WAS·OCI api는 `.env`의 `DB_HOST`만 바꿨다. 계정은 원본의
   `SHOW CREATE USER`(`print_identified_with_as_hex=ON`) 해시를 옮겨 만들었다 — 비밀번호 원문을 꺼내지 않는다.

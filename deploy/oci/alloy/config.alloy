@@ -39,21 +39,26 @@ prometheus.scrape "host" {
 }
 
 // ── api: Spring actuator(관리 포트 9090, 컨테이너 내부망에서만 열림) ─────────────────
+// blue/green 중 한 색만 실행되므로 다른 색의 up=0은 정상이다. 아래 keep 규칙이 instance를 고정하므로
+// color가 없으면 두 색이 같은 시계열이 된다.
 prometheus.scrape "api" {
-  targets         = [{"__address__" = "api:9090"}]
+  targets = [
+    {"__address__" = "api-blue:9090", "color" = "blue"},
+    {"__address__" = "api-green:9090", "color" = "green"},
+  ]
   job_name        = "spring_boot"
   metrics_path    = "/actuator/prometheus"
   scrape_interval = "60s"
   forward_to      = [prometheus.relabel.keep.receiver]
 }
 
-// ── ai: 지표 endpoint가 없어 /health 응답만 본다 ────────────────────────────────────
+// ── ai: 지표 endpoint가 없어 /health 응답만 본다. nginx 내부 listener를 거쳐 활성 색을 따라간다 ──
 prometheus.exporter.blackbox "ai" {
   config = "{ modules: { http_2xx: { prober: http, timeout: 5s } } }"
 
   target {
     name    = "ai_health"
-    address = "http://ai:8080/health"
+    address = "http://nginx:8089/health"
     module  = "http_2xx"
   }
 }
@@ -98,6 +103,11 @@ loki.process "app_errors" {
   stage.template {
     source   = "is_app_error"
     template = "{{ if and .level .service }}{{ if and (eq .level \"ERROR\") (eq .service \"laimory\") }}1{{ end }}{{ end }}"
+  }
+
+  // 파일 경로(컨테이너 ID)·stream별로 counter가 갈리면 아래에서 label을 지울 때 두 색의 시계열이 겹친다.
+  stage.label_drop {
+    values = ["filename", "stream"]
   }
 
   stage.metrics {
