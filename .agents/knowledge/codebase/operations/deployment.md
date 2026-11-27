@@ -74,11 +74,15 @@ host 설치, GitHub Environment `prod`, Tailscale identity, blue/green 구조 �
   저장소별로 고정된 서비스(api 또는 ai)에 "이 SHA·digest 이미지를 배포"하는 것뿐이다.
 - 교체는 blue/green이다. 새 색이 정상일 때만 nginx upstream을 옮기고, 실제로 새 색이 응답함을 확인한 뒤 옛 색을 정상 종료한다.
   실패하면 옛 색이 계속 서빙한다. 배포 본체는 systemd unit이라 SSH가 끊겨도 완주한다.
-- 전환 동안 api 두 개가 함께 돈다(약 1분). OCI는 `SERVER_COUNT=1`이라 03:30 고아 정리·04:00 draft 정리가 겹치면 같은 행을
+- 전환 동안 api 두 개가 함께 돈다. 보통 약 1분이고, 스크립트 상한의 합(health 90초 + 8초 + 전환 확인 30초 + 30초 +
+  정상 종료 120초)은 약 4분 40초다. 금지 창이 job 5분 전에 시작하는 것은 이 상한 때문이므로, 상한을 늘리면 창도 늘린다. OCI는 `SERVER_COUNT=1`이라 03:30 고아 정리·04:00 draft 정리가 겹치면 같은 행을
   동시에 지우고, 21:00 리마인더는 정지 중 발송이 유실될 수 있어 KST 02:25~04:50·20:55~21:10에는 배포를 시작하지 않는다.
   스케줄 cron을 바꾸면 `laimory-deploy`의 창도 함께 고친다.
 - Flyway migration은 새 색이 기동할 때 적용된다. 옛 색이 함께 서빙하므로 구 앱 호환 migration 원칙은 그대로다.
 - `DEPLOY_PAUSED=true`는 push 빌드·배포를 건너뛴다. `workflow_dispatch`(`build-only`·`deploy`)는 통과한다.
+- 수동 `deploy`는 `main` 이력에 있는 커밋만 받는다. `build-only`는 아무 ref나 빌드할 수 있지만 대기열(concurrency group)이 달라
+  대기 중인 `main` 배포를 밀어내지 않는다.
+- host는 대기 색이 실제로 확인한 이미지(digest)로 떴는지 대조한 뒤에야 health를 본다.
 - host의 compose·nginx·Alloy 파일은 자동 반영하지 않는다(사람이 머지된 커밋의 파일을 설치).
 
 ## Monitoring Alert Rule Deployment

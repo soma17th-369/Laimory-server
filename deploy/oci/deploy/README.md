@@ -15,7 +15,7 @@ host 파일은 자동 반영하지 않는다 — 바꾸면 머지된 커밋의 �
 1. 시작 조건: upstream 파일이 활성 색 하나를 가리키고, 활성 색만 실행 중이고, compose 파일이 유효하다. 아니면 아무것도 하지 않는다.
 2. 이미지를 digest로 받고 `org.opencontainers.image.revision` label이 요청 SHA와 같은지 본다.
 3. api만: KST 02:25~04:50, 20:55~21:10이면 중단한다(스케줄 job과 두 api 공존을 피한다). 지나서 다시 실행한다.
-4. 대기 색 container를 새 이미지로 띄운다. Flyway migration은 이때 실행된다. api는 `/readyz`·`/api/v1/intro`, ai는 `/ping`이
+4. 대기 색 container를 새 이미지로 띄우고, 실제로 뜬 이미지가 2단계에서 확인한 이미지인지 대조한다. Flyway migration은 이때 실행된다. api는 `/readyz`·`/api/v1/intro`, ai는 `/ping`이
    90초 안에 정상이어야 한다.
 5. nginx upstream의 `down` 표시를 옮기고 reload한다. 내부 listener가 대기 색 주소로 연속 10회 응답해야 전환으로 본다.
 6. 30초 뒤 옛 색을 `docker stop`(api 120초, ai 300초)한다. 삭제하지 않고 복귀용으로 둔다.
@@ -27,6 +27,7 @@ host 파일은 자동 반영하지 않는다 — 바꾸면 머지된 커밋의 �
 
 - 직전 배포가 성공했다: host에서 `sudo laimory-deploy rollback api`(또는 `ai`). 보관한 옛 색을 켜고 전환한다(무중단).
 - 직전 배포가 실패했거나 더 이전 버전: `Deploy prod (OCI)`를 `main`에서 `action=deploy`, `image_sha=<이전 SHA>`로 실행한다.
+  `image_sha`는 `main` 이력에 있는 커밋이어야 한다(다른 브랜치를 `build-only`로 빌드한 이미지는 거절한다).
   실패한 배포가 대기 색을 덮어써서 `rollback`은 거부된다.
 - 앱 복귀는 Flyway가 적용한 DB 변경을 되돌리지 않는다. migration이 실패하면 활성 색은 계속 서빙하지만 **새 이미지는 복구
   전까지 다시 배포하지 않는다**([Flyway 절차 §5](../../../docs/database/flyway-adoption.md)).
@@ -83,6 +84,9 @@ host 파일은 자동 반영하지 않는다 — 바꾸면 머지된 커밋의 �
 ```
 
 `environment`가 `env_file`보다 우선하므로 `api.env`의 `APP_COMMIT_SHA`는 쓰이지 않는다.
+
+docker 네트워크 이름은 정확히 `laimory`여야 한다(스크립트가 이 이름으로 대기 색 주소를 읽는다). compose 최상위에
+`networks: {laimory: {name: laimory}}`를 둔다 — 없으면 `laimory_laimory`가 되어 모든 배포가 전환 전에 실패한다.
 
 `nginx/upstream/{api,ai}.conf` — 디렉터리째 `/etc/nginx/upstream:ro`로 마운트하고 템플릿이 `include /etc/nginx/upstream/*.conf;` 한다.
 두 색을 늘 함께 적고 `down`만 옮긴다(새 이름이 처음 들어오는 reload는 주소를 몰라 그 순간 502가 난다).

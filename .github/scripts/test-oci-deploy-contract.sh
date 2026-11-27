@@ -25,6 +25,7 @@ ruby -ryaml -e '
   abort "push paths changed" unless on.dig("push", "paths") == [".github/workflows/deploy-oci.yml", ".dockerignore", "Dockerfile", "build.gradle", "gradle.properties", "gradle/**", "gradlew", "settings.gradle", "src/main/**"]
   abort "workflow must not run on pull requests" if on.keys.any? { |k| k.to_s.start_with?("pull_request") }
   abort "running deployments must not be cancelled" unless wf.dig("concurrency", "cancel-in-progress") == false
+  abort "build-only must not share the deploy queue" unless wf.dig("concurrency", "group").include?("inputs.action == \x27build-only\x27")
   abort "default permissions must be read only" unless wf["permissions"] == {"contents" => "read"}
   build, deploy = wf["jobs"].values_at("build", "deploy")
   abort "build must be native arm64" unless build["runs-on"] == "ubuntu-24.04-arm"
@@ -44,6 +45,10 @@ ruby -ryaml -e '
   %w[SSH_KEY HOST KNOWN_HOSTS].each { |k| abort "#{k} must be an environment secret" unless ssh["env"][k].include?("secrets.") }
   abort "host key must be verified" unless ssh["run"].include?("StrictHostKeyChecking=yes")
   abort "deploy command must be sent once" unless ssh["run"].scan(/"deploy \$SHA \$DIGEST"/).size == 1
+  resolve = deploy["steps"].find { |s| s["name"] == "Resolve image" }["run"]
+  abort "a manual deploy must only accept commits on main" unless resolve.include?("git merge-base --is-ancestor \"$sha\" \"$GITHUB_SHA\"")
+  co = deploy["steps"].find { |s| s["uses"].to_s.start_with?("actions/checkout@") }
+  abort "deploy needs full history without stored credentials" unless co && co["with"] == {"fetch-depth" => 0, "persist-credentials" => false}
   runs = wf["jobs"].values.flat_map { |j| j["steps"].map { |s| s["run"].to_s } }.join("\n")
   abort "no shell tracing in a public log" if runs =~ /set -[a-z]*x/
   abort "expressions must not be interpolated into shell" if runs.include?("${{")
@@ -87,12 +92,13 @@ case "$1" in
   ps) a="$*"; s=${a##*service=}; [ ! -f "$C/$s" ] || echo "$s" ;;
   inspect) id=${*: -1}; case "$*" in
       *State.Running*) [ "$(cat "$C/$id")" = running ] && echo true || echo false ;;
-      *IPAddress*) ip "$id" ;; esac ;;
+      *IPAddress*) ip "$id" ;;
+      *'{{.Image}}'*) echo "${FAKE_RUN_IMAGE:-sha256:verified}" ;; esac ;;
   stop) id=${*: -1}; [ "${FAKE_STOP_STUCK:-}" = "$id" ] || echo exited > "$C/$id" ;;
   start) id=${*: -1}; echo running > "$C/$id" ;;
   pull) exit "${FAKE_PULL:-0}" ;;
   image) case "$2" in
-      inspect) echo "${FAKE_LABEL:-$FIXTURE_SHA}" ;;
+      inspect) case "$*" in *'{{.Id}}'*) echo sha256:verified ;; *) echo "${FAKE_LABEL:-$FIXTURE_SHA}" ;; esac ;;
       ls) echo sha256:old; echo sha256:new ;;
       rm) exit 1 ;; esac ;;
   compose) shift; case "$*" in
@@ -101,13 +107,23 @@ case "$1" in
       *"nginx -t") echo "$SENTINEL" >&2; exit "${FAKE_NGINX_T:-0}" ;;
       *"nginx -s reload") [ -n "${FAKE_RELOAD_STUCK:-}" ] || cp "$LAIMORY_ROOT"/nginx/upstream/*.conf "$CASE/loaded/" ;;
       *curl*) url=${*: -1}; case "$url" in
-          *127.0.0.1*) a=$(grep '^    server ' "$CASE/loaded/$FIXTURE_SERVICE.conf" | grep -v ' down;' | sed -E 's/.*server ([a-z]+-[a-z]+):.*/\1/')
+          *127.0.0.1*) [ -z "${FAKE_CONFIRM_FAIL:-}" ] || { printf '200 10.9.0.9:8080'; exit 0; }
+            a=$(grep '^    server ' "$CASE/loaded/$FIXTURE_SERVICE.conf" | grep -v ' down;' | sed -E 's/.*server ([a-z]+-[a-z]+):.*/\1/')
             printf '200 %s:8080' "$(ip "$a")" ;;
           *) echo "$SENTINEL"; [ -z "${FAKE_UNHEALTHY:-}" ] || exit 22 ;; esac ;;
     esac ;;
 esac
 STUBEOF
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/sleep"
+# 바깥 실행용: 실행 중인 unit 흉내, systemd-run은 안쪽 실행을 그대로 돌리고 stdout을 지정한 로그에 덧붙인다.
+printf '#!/usr/bin/env bash\necho "systemctl $*" >> "$CASE/calls"\n[ -n "${FAKE_UNIT_ACTIVE:-}" ]\n' > "$STUB/systemctl"
+cat > "$STUB/systemd-run" <<'STUBEOF'
+#!/usr/bin/env bash
+echo "systemd-run $*" >> "$CASE/calls"
+log=""
+while [ "${1#--}" != "$1" ]; do case "$1" in --property=StandardOutput=append:*) log=${1#--property=StandardOutput=append:} ;; esac; shift; done
+LAIMORY_DEPLOY_INNER=1 bash "$@" >> "$log" 2>/dev/null
+STUBEOF
 chmod +x "$STUB"/*
 
 upstream() { # $1 service $2 active
@@ -125,7 +141,7 @@ new_case() { # $1 service: blue가 서빙 중, green은 없음
 run() { # VAR=value... -- args
   local e=(); while [ "$1" != "--" ]; do e+=("$1"); shift; done; shift
   env PATH="$STUB:$PATH" SENTINEL="$SENTINEL" FIXTURE_SHA="$SHA" FIXTURE_SERVICE="$S" LAIMORY_DEPLOY_INNER=1 LAIMORY_ROOT="$CASE/root" \
-    LAIMORY_STATE_DIR="$CASE/state" LAIMORY_NOW=1200 LAIMORY_HEALTH_TIMEOUT=1 LAIMORY_CONFIRM_TIMEOUT=2 "${e[@]+"${e[@]}"}" \
+    LAIMORY_STATE_DIR="$CASE/state" LAIMORY_RUN_DIR="$CASE/run" LAIMORY_NOW=1200 LAIMORY_HEALTH_TIMEOUT=1 LAIMORY_CONFIRM_TIMEOUT=2 "${e[@]+"${e[@]}"}" \
     bash "$DEPLOY" "$@" > "$CASE/out.log" 2> "$CASE/err.log"; RC=$?
   ! grep -q "$SENTINEL" "$CASE/out.log" || fail "public output leaked command output"
 }
@@ -171,7 +187,7 @@ done
 new_case ai; run LAIMORY_NOW=0300 -- ai $SHA $DIGEST; [ "$RC" = 0 ] || fail "D3: ai has no scheduled jobs and must deploy"
 ok "D3: api refuses the scheduled-job windows (KST); ai is unaffected"
 
-for e in FAKE_UP=1 FAKE_UNHEALTHY=1; do
+for e in FAKE_UP=1 FAKE_RUN_IMAGE=sha256:other FAKE_UNHEALTHY=1; do
   new_case api; echo blue > "$CASE/state/api.standby"; run $e -- api $SHA $DIGEST
   [ "$RC" != 0 ] && [ "$(active)" = blue ] && [ "$(state blue)" = running ] && [ "$(state green)" != running ] || fail "D4($e): blue must keep serving and green must not run"
   ! grep -q 'nginx -s reload' "$CASE/calls" || fail "D4($e): nginx must not be touched"
@@ -186,6 +202,9 @@ for e in FAKE_NGINX_T=1 FAKE_RELOAD_STUCK=1; do
 done
 new_case api; run FAKE_RELOAD_STUCK=1 -- api $SHA $DIGEST
 [ "$(state green)" = exited ] || fail "D5: an unconfirmed candidate must be stopped"
+new_case api; run FAKE_CONFIRM_FAIL=1 -- api $SHA $DIGEST
+[ "$RC" != 0 ] && [ "$(state green)" = exited ] && [ "$(state blue)" = running ] || fail "D5: a candidate nginx does not serve must be stopped"
+[ "$(active)" = blue ] && [ "$(grep -c 'nginx -s reload' "$CASE/calls")" = 2 ] || fail "D5: nginx must actually reload the old color after a failed confirmation"
 new_case api; run FAKE_NGINX_T=1 -- api $SHA $DIGEST
 grep -q '^CRITICAL' "$CASE/out.log" && [ "$(state green)" = running ] || fail "D5: when nginx cannot be restored both colors must stay up for inspection"
 ok "D5: the old color is stopped only after nginx proves the candidate serves; otherwise upstream is restored"
@@ -200,6 +219,19 @@ new_case api; run -- api $SHA $DIGEST; run -- rollback api
 new_case api; echo exited > "$CASE/containers/api-green"; run -- rollback api
 [ "$RC" != 0 ] && [ "$(state green)" = exited ] && [ "$(active)" = blue ] || fail "R1: rollback without a known-good standby must refuse"
 ok "R1: rollback restores only a known-good standby"
+
+# 바깥 실행(systemd 분리): 같은 서비스의 배포가 돌고 있으면 거절하고 그 로그를 건드리지 않는다. 결과·종료 코드는 그대로 전한다.
+new_case api; run LAIMORY_DEPLOY_INNER= -- api $SHA $DIGEST
+[ "$RC" = 0 ] && [ "$(active)" = green ] && grep -q '^done: ' "$CASE/out.log" || fail "O1: the detached run must report its result"
+grep -q -- '--unit=laimory-deploy-api ' "$CASE/calls" || fail "O1: the unit name must be fixed per service"
+new_case api; mkdir -p "$CASE/run"; echo running-deploy > "$CASE/run/api.log"
+run LAIMORY_DEPLOY_INNER= FAKE_UNIT_ACTIVE=1 -- api $SHA $DIGEST
+[ "$RC" != 0 ] && ! grep -q '^systemd-run' "$CASE/calls" || fail "O1: a second deployment of the same service must be refused"
+grep -qx running-deploy "$CASE/run/api.log" || fail "O1: a refused run must not truncate the running deployment's log"
+unchanged "O1"
+new_case api; run LAIMORY_DEPLOY_INNER= FAKE_UNHEALTHY=1 -- api $SHA $DIGEST
+[ "$RC" != 0 ] && grep -q '^FAIL: ' "$CASE/out.log" || fail "O1: a failed detached run must fail the caller with its message"
+ok "O1: the detached run refuses a concurrent deployment and passes the result through"
 
 new_case api
 for args in "api $SHA" "api $SHA sha256:zz" "mysql $SHA $DIGEST" "api ${SHA}x $DIGEST" "rollback" "rollback mysql"; do
