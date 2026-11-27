@@ -27,7 +27,7 @@ host 파일은 자동 반영하지 않는다 — 바꾸면 머지된 커밋의 �
 
 - 직전 배포가 성공했다: host에서 `sudo laimory-deploy rollback api`(또는 `ai`). 보관한 옛 색을 켜고 전환한다(무중단).
 - 직전 배포가 실패했거나 더 이전 버전: `Deploy prod (OCI)`를 `main`에서 `action=deploy`, `image_sha=<이전 SHA>`로 실행한다.
-  `image_sha`는 `main` 이력에 있는 커밋이어야 한다(다른 브랜치를 `build-only`로 빌드한 이미지는 거절한다).
+  `image_sha`는 `main` 이력에 있는 커밋이어야 한다(다른 브랜치를 `build-only`로 빌드한 이미지를 실수로 올리는 것을 막는다. SHA만 보므로 이미지 내용까지 보장하지는 않는다).
   실패한 배포가 대기 색을 덮어써서 `rollback`은 거부된다.
 - 앱 복귀는 Flyway가 적용한 DB 변경을 되돌리지 않는다. migration이 실패하면 활성 색은 계속 서빙하지만 **새 이미지는 복구
   전까지 다시 배포하지 않는다**([Flyway 절차 §5](../../../docs/database/flyway-adoption.md)).
@@ -157,6 +157,10 @@ restrict,command="/usr/local/bin/laimory-deploy-gate ai" ssh-ed25519 <Laimory-AI
 | Tailscale | federated identity | `auth_keys` write + `tag:ci`, subject = 저장소의 Environment `prod` |
 | Tailscale ACL | grant·tests | `tag:ci` → OCI host `tcp:22`만 허용, 그 밖은 거부 test |
 | GHCR | 패키지 공개 | 첫 push는 비공개로 생긴다. 공개 전환 뒤 host에서 익명 pull 확인. 되돌릴 수 없다 |
+
+Laimory-AI 저장소도 같은 표를 따르되 값이 다르다. Environment는 `prod-oci`이고 Tailscale subject도 그 Environment
+(`repo:soma17th-369/Laimory-AI:environment:prod-oci`)다. SSH 키는 위 `laimory-deploy-gate ai` 줄의 AI 전용 키를 쓰고(서버 키를 쓰면
+host가 `laimory-server` 저장소에서 AI digest를 찾다 실패한다), GHCR 패키지는 `laimory-ai`를 따로 공개한다.
 
 ## 검증
 
