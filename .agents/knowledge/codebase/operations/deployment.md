@@ -80,7 +80,7 @@ host 설치, GitHub Environment `prod`, Tailscale identity, blue/green 구조 �
   스케줄 cron을 바꾸면 `laimory-deploy`의 창도 함께 고친다.
 - Flyway migration은 새 색이 기동할 때 적용된다. 옛 색이 함께 서빙하므로 구 앱 호환 migration 원칙은 그대로다.
 - `DEPLOY_PAUSED=true`는 push 빌드·배포를 건너뛴다. `workflow_dispatch`(`build-only`·`deploy`)는 통과한다.
-- 수동 `deploy`는 `main` 이력에 있는 커밋만 받는다. `build-only`는 아무 ref나 빌드할 수 있지만 대기열(concurrency group)이 달라
+- 수동 `deploy`는 `main` 이력에 있는 커밋만 받는다(실수 방지다. SHA만 보므로 이미지 내용까지 보장하지는 않는다). `build-only`는 아무 ref나 빌드할 수 있지만 대기열(concurrency group)이 달라
   대기 중인 `main` 배포를 밀어내지 않는다.
 - host는 대기 색이 실제로 확인한 이미지(digest)로 떴는지 대조한 뒤에야 health를 본다.
 - host의 compose·nginx·Alloy 파일은 자동 반영하지 않는다(사람이 머지된 커밋의 파일을 설치).

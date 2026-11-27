@@ -36,8 +36,9 @@ ruby -ryaml -e '
   abort "deploy permissions changed" unless deploy["permissions"] == {"contents" => "read", "id-token" => "write"}
   abort "deploy must run only on main" unless deploy["if"].include?("github.ref == \x27refs/heads/main\x27")
   abort "deploy must require a successful build on push" unless deploy["if"].include?("needs.build.result == \x27success\x27")
-  uses = deploy["steps"].map { |s| s["uses"] }.compact
-  abort "deploy job actions must be pinned to a commit" unless uses.all? { |u| u =~ /@[0-9a-f]{40}\z/ }
+  abort "cancelling a run must stop the deploy" unless deploy["if"].start_with?("!cancelled() &&") && !deploy["if"].include?("always()")
+  uses = wf["jobs"].values.flat_map { |j| j["steps"].map { |s| s["uses"] } }.compact
+  abort "actions must be pinned to a commit (build output reaches prod)" unless uses.all? { |u| u =~ /@[0-9a-f]{40}\z/ }
   ts = deploy["steps"].find { |s| s["uses"].to_s.start_with?("tailscale/github-action@") }["with"]
   abort "tailscale must use workload identity without long-lived secrets" if ts.key?("authkey") || ts.key?("oauth-secret") || !ts.key?("audience")
   abort "tailscale tag changed" unless ts["tags"] == "tag:ci"
